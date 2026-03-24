@@ -142,6 +142,8 @@ user_is_admin = is_admin(current_user) if current_user else True  # Default admi
 ALL_PAGES = {
     "accounting": [
         "FZ Fee Reconciliation",
+    ],
+    "labor": [
         "AVS Weekly Report",
         "AVS Mid-Week Pulse",
         "AVS Tuesday Report",
@@ -171,30 +173,33 @@ def set_page(section, page_name):
     st.session_state["active_section"] = section
 
 
-st.sidebar.header("Accounting")
-for p in ALL_PAGES["accounting"]:
-    is_active = st.session_state["active_page"] == p
-    label = f"**{p}**" if is_active else p
-    if st.sidebar.button(label, key=f"nav_acct_{p}", use_container_width=True):
-        set_page("accounting", p)
-        st.rerun()
-
-with st.sidebar.expander("Settings", expanded=st.session_state["active_section"] == "settings"):
-    for p in ALL_PAGES["settings"]:
-        is_active = st.session_state["active_page"] == p
-        label = f"**{p}**" if is_active else p
-        if st.button(label, key=f"nav_set_{p}", use_container_width=True):
-            set_page("settings", p)
-            st.rerun()
-
-if user_is_admin:
-    with st.sidebar.expander("Admin", expanded=st.session_state["active_section"] == "admin"):
-        for p in ALL_PAGES["admin"]:
+def render_nav_section(header, section_key, use_expander=False):
+    """Render a navigation section in the sidebar."""
+    pages = ALL_PAGES[section_key]
+    if use_expander:
+        is_expanded = st.session_state["active_section"] == section_key
+        with st.sidebar.expander(header, expanded=is_expanded):
+            for p in pages:
+                is_active = st.session_state["active_page"] == p
+                label = f"**{p}**" if is_active else p
+                if st.button(label, key=f"nav_{section_key}_{p}", use_container_width=True):
+                    set_page(section_key, p)
+                    st.rerun()
+    else:
+        st.sidebar.header(header)
+        for p in pages:
             is_active = st.session_state["active_page"] == p
             label = f"**{p}**" if is_active else p
-            if st.button(label, key=f"nav_admin_{p}", use_container_width=True):
-                set_page("admin", p)
+            if st.sidebar.button(label, key=f"nav_{section_key}_{p}", use_container_width=True):
+                set_page(section_key, p)
                 st.rerun()
+
+
+render_nav_section("Accounting", "accounting")
+render_nav_section("Labor", "labor")
+render_nav_section("Settings", "settings", use_expander=True)
+if user_is_admin:
+    render_nav_section("Admin", "admin", use_expander=True)
 
 page = st.session_state["active_page"]
 
