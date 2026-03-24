@@ -4,6 +4,9 @@ data/
 *.xls
 *.csv
 !fz_fees/locations.csv
+!labor/reference_data.csv
+!labor/band_goals.csv
+!labor/dm_list.csv
 
 # Python
 __pycache__/
