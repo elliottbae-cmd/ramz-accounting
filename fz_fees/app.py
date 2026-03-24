@@ -59,6 +59,55 @@ BAND_OPTIONS = [
 st.set_page_config(page_title="Ram-Z Accounting Toolbox", layout="wide")
 
 # ---------------------------------------------------------------------------
+# Compact sidebar CSS
+# ---------------------------------------------------------------------------
+st.markdown("""
+<style>
+/* Tighten sidebar spacing */
+section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.15rem; }
+
+/* Compact nav buttons */
+section[data-testid="stSidebar"] button[kind="secondary"] {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.85rem;
+    min-height: 0;
+    height: auto;
+    line-height: 1.3;
+    border: none;
+    background: transparent;
+    text-align: left;
+    justify-content: flex-start;
+}
+section[data-testid="stSidebar"] button[kind="secondary"]:hover {
+    background: rgba(151, 166, 195, 0.15);
+}
+
+/* Compact expanders */
+section[data-testid="stSidebar"] details {
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+}
+section[data-testid="stSidebar"] details summary {
+    padding: 0.3rem 0;
+    font-size: 0.85rem;
+}
+section[data-testid="stSidebar"] details[open] [data-testid="stVerticalBlock"] {
+    gap: 0.1rem;
+    padding-left: 0.5rem;
+}
+
+/* Sidebar header */
+section[data-testid="stSidebar"] h2 {
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid rgba(151, 166, 195, 0.2);
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
 # User identity (Streamlit Cloud provides this)
 # ---------------------------------------------------------------------------
 def get_current_user_email():
