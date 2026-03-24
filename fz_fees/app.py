@@ -67,7 +67,7 @@ st.markdown("""
 section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
 section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.15rem; }
 
-/* Compact nav buttons */
+/* Compact nav buttons — left aligned */
 section[data-testid="stSidebar"] button[kind="secondary"] {
     padding: 0.2rem 0.5rem;
     font-size: 0.85rem;
@@ -76,8 +76,14 @@ section[data-testid="stSidebar"] button[kind="secondary"] {
     line-height: 1.3;
     border: none;
     background: transparent;
-    text-align: left;
-    justify-content: flex-start;
+    text-align: left !important;
+    justify-content: flex-start !important;
+}
+section[data-testid="stSidebar"] button[kind="secondary"] p,
+section[data-testid="stSidebar"] button[kind="secondary"] span,
+section[data-testid="stSidebar"] button[kind="secondary"] div {
+    text-align: left !important;
+    width: 100%;
 }
 section[data-testid="stSidebar"] button[kind="secondary"]:hover {
     background: rgba(151, 166, 195, 0.15);
