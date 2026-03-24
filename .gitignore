@@ -3,6 +3,7 @@ data/
 *.xlsx
 *.xls
 *.csv
+!fz_fees/locations.csv
 
 # Python
 __pycache__/

@@ -99,7 +99,7 @@ def load_locations(path: str) -> pd.DataFrame:
     required = {"location_id", "store_name"}
     missing = required - set(df.columns)
     if missing:
-        sys.exit(f"ERROR: locations.csv is missing columns: {missing}")
+        raise ValueError(f"locations.csv is missing columns: {missing}")
     df["location_id"] = df["location_id"].str.strip().str.upper()
     return df[["location_id", "store_name"]]
 
@@ -119,7 +119,7 @@ def load_fz_schedule(path: str) -> tuple:
 
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
-        sys.exit("ERROR: FZ fee schedule appears to be empty.")
+        raise ValueError("FZ fee schedule appears to be empty.")
 
     headers = [str(h).strip() if h is not None else "" for h in rows[0]]
 
@@ -129,9 +129,9 @@ def load_fz_schedule(path: str) -> tuple:
         try:
             col_idx[key] = headers.index(col_name)
         except ValueError:
-            sys.exit(
-                f"ERROR: FZ fee schedule is missing expected column '{col_name}'.\n"
-                f"       Columns found: {headers}"
+            raise ValueError(
+                f"FZ fee schedule is missing expected column '{col_name}'.\n"
+                f"Columns found: {headers}"
             )
 
     records = []
@@ -169,7 +169,7 @@ def load_fz_schedule(path: str) -> tuple:
         })
 
     if not records:
-        sys.exit("ERROR: No store data rows found in FZ fee schedule.")
+        raise ValueError("No store data rows found in FZ fee schedule.")
 
     df = pd.DataFrame(records)
 
@@ -178,19 +178,12 @@ def load_fz_schedule(path: str) -> tuple:
 
     if week_end_date is None:
         print("  WARNING: Could not detect week-end date from FZ file.")
-        print()
-        while True:
-            raw = input("  Enter FZ fee schedule week-end date (MMDDYYYY, e.g. 03112026): ").strip()
-            try:
-                week_end_date = datetime.strptime(raw, "%m%d%Y")
-                break
-            except ValueError:
-                print("  Invalid format — please use MMDDYYYY (e.g. 03112026)")
 
     print(f"  Stores loaded        : {len(df)}")
     print(f"  Fiscal year          : {int(df['fiscal_year'].iloc[0])}")
     print(f"  Week                 : {int(df['week_num'].iloc[0])}")
-    print(f"  Week end             : {week_end_date.strftime('%m/%d/%Y')}")
+    if week_end_date:
+        print(f"  Week end             : {week_end_date.strftime('%m/%d/%Y')}")
     print(f"  Help desk fee added  : ${HELPDESK_FEE_WEEKLY:.2f} per store "
           f"(total: ${HELPDESK_FEE_WEEKLY * len(df):,.2f})")
 
@@ -265,7 +258,7 @@ def load_bank_data(path: str) -> pd.DataFrame:
         ws = wb.active
         raw_rows = list(ws.iter_rows(values_only=True))
     except Exception as e:
-        sys.exit(f"ERROR: Could not read bank data file: {e}")
+        raise ValueError(f"Could not read bank data file: {e}")
 
     STORE_ID_PATTERN = re.compile(r"(1\d{2}-\d{4})")
 
@@ -317,7 +310,7 @@ def load_bank_data(path: str) -> pd.DataFrame:
         })
 
     if not records:
-        sys.exit("ERROR: No valid transactions found in bank data file.")
+        raise ValueError("No valid transactions found in bank data file.")
 
     df_raw = pd.DataFrame(records)
 
@@ -476,7 +469,7 @@ def reconcile(locations: pd.DataFrame, fz: pd.DataFrame,
 # Invoice generation — three separate AP invoice CSVs for accounting import
 # ---------------------------------------------------------------------------
 
-def generate_invoices(results: pd.DataFrame, week_end_dt, fiscal_yr, week_num):
+def generate_invoices(results: pd.DataFrame, week_end_dt, fiscal_yr, week_num, output=None):
     """
     Generates three AP invoice CSV files using the RECONCILED results dataframe,
     so invoice amounts always reflect the same values used in the reconciliation
@@ -497,9 +490,9 @@ def generate_invoices(results: pd.DataFrame, week_end_dt, fiscal_yr, week_num):
     Amount = sum of all detail amounts for that invoice.
     """
 
-    invoice_date = week_end_dt.strftime("%-m/%-d/%Y")
+    invoice_date = f"{week_end_dt.month}/{week_end_dt.day}/{week_end_dt.year}"
     due_date_dt  = week_end_dt + pd.Timedelta(days=9)
-    due_date     = due_date_dt.strftime("%-m/%-d/%Y")
+    due_date     = f"{due_date_dt.month}/{due_date_dt.day}/{due_date_dt.year}"
     yr           = int(fiscal_yr)
     wk           = int(week_num)
 
@@ -548,7 +541,11 @@ def generate_invoices(results: pd.DataFrame, week_end_dt, fiscal_yr, week_num):
 
     df_inv = pd.DataFrame(rows, columns=COLS)
     filename = f"invoice_Week{wk:02d}_{yr}.csv"
-    df_inv.to_csv(filename, index=False)
+
+    if output is not None:
+        df_inv.to_csv(output, index=False)
+    else:
+        df_inv.to_csv(filename, index=False)
 
     return [(inv_number, filename, grand_total, len(rows))]
 
@@ -1267,7 +1264,7 @@ def build_summary_tab(ws, df, fz_label, bank_date, fiscal_yr, week_num):
 # Write report — orchestrates all three tabs
 # ---------------------------------------------------------------------------
 
-def write_report(df: pd.DataFrame, fz_week_end_dt: object, bank_date_str: str):
+def write_report(df: pd.DataFrame, fz_week_end_dt: object, bank_date_str: str, output=None):
     from openpyxl import Workbook
     from openpyxl.utils import get_column_letter
 
@@ -1321,7 +1318,10 @@ def write_report(df: pd.DataFrame, fz_week_end_dt: object, bank_date_str: str):
     build_summary_tab(ws_top, df, fz_label, bank_date_str, fiscal_yr, week_num)
     build_summary_detailed_tab(ws_sum, df, fz_label, bank_date_str, fiscal_yr, week_num)
 
-    wb.save(filename)
+    if output is not None:
+        wb.save(output)
+    else:
+        wb.save(filename)
 
     print(f"\n  Output file          : {filename}")
     print(f"  FZ week end          : {fz_label}")
@@ -1362,6 +1362,17 @@ def main():
 
     print(f"\n[2/4] Loading FZ fee schedule...")
     fz, fz_week_end_dt = load_fz_schedule(args.fz)
+
+    # If load_fz_schedule could not detect the week-end date, prompt interactively
+    if fz_week_end_dt is None:
+        print()
+        while True:
+            raw = input("  Enter FZ fee schedule week-end date (MMDDYYYY, e.g. 03112026): ").strip()
+            try:
+                fz_week_end_dt = datetime.strptime(raw, "%m%d%Y")
+                break
+            except ValueError:
+                print("  Invalid format — please use MMDDYYYY (e.g. 03112026)")
 
     # Determine bank date label — try CLI arg, then auto-detect from file, then prompt
     bank_date_str = None
