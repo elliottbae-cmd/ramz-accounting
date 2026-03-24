@@ -8,7 +8,7 @@ Run with:
 
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from io import BytesIO, StringIO
 
 import pandas as pd
@@ -32,6 +32,13 @@ from avs_engine import (
     generate_weekly_report, generate_midweek_report, generate_tuesday_report,
     REFERENCE_DATA_PATH, BAND_GOALS_PATH, DM_LIST_PATH,
 )
+from weekly_lock import (
+    get_week_start, get_week_end, get_next_week_start, format_week_label,
+    load_locked_config, lock_exists, create_lock,
+    ensure_current_week_locked, override_locked_value, get_locked_weeks,
+    load_change_log, is_admin, load_admin_users, add_admin, remove_admin,
+    WEEKLY_LOCK_PATH, CHANGE_LOG_PATH, ADMIN_USERS_PATH,
+)
 
 # ---------------------------------------------------------------------------
 # Config paths
@@ -52,6 +59,22 @@ BAND_OPTIONS = [
 st.set_page_config(page_title="Ram-Z Accounting Toolbox", layout="wide")
 
 # ---------------------------------------------------------------------------
+# User identity (Streamlit Cloud provides this)
+# ---------------------------------------------------------------------------
+def get_current_user_email():
+    """Get the current user's email from Streamlit Cloud auth."""
+    try:
+        user_info = st.experimental_user
+        if user_info and hasattr(user_info, "email") and user_info.email:
+            return user_info.email.strip().lower()
+    except Exception:
+        pass
+    return ""
+
+current_user = get_current_user_email()
+user_is_admin = is_admin(current_user) if current_user else True  # Default admin if no auth
+
+# ---------------------------------------------------------------------------
 # Navigation
 # ---------------------------------------------------------------------------
 accounting_pages = [
@@ -59,12 +82,18 @@ accounting_pages = [
     "AVS Weekly Report",
     "AVS Mid-Week Pulse",
     "AVS Tuesday Report",
+    "Performance Review",
 ]
 settings_pages = [
     "Manage Stores",
     "Store Revenue Bands",
     "DM Assignments",
     "Hourly Goals",
+]
+admin_pages = [
+    "Weekly Config",
+    "Change Log",
+    "Admin Users",
 ]
 
 st.sidebar.header("Accounting")
@@ -73,9 +102,41 @@ page = st.sidebar.radio("Accounting Nav", accounting_pages, label_visibility="co
 with st.sidebar.expander("Settings", expanded=False):
     settings_choice = st.radio("Settings Nav", settings_pages, index=None, label_visibility="collapsed")
 
-# If a settings page is selected, override the page
+if user_is_admin:
+    with st.sidebar.expander("Admin", expanded=False):
+        admin_choice = st.radio("Admin Nav", admin_pages, index=None, label_visibility="collapsed")
+else:
+    admin_choice = None
+
+# If a settings/admin page is selected, override the page
 if settings_choice is not None:
     page = settings_choice
+if admin_choice is not None:
+    page = admin_choice
+
+# ---------------------------------------------------------------------------
+# Week deadline banner helper
+# ---------------------------------------------------------------------------
+def show_week_deadline_banner():
+    """Show a banner about the weekly lock schedule on settings pages."""
+    today = date.today()
+    current_ws = get_week_start(today)
+    next_ws = get_next_week_start(today)
+    current_label = format_week_label(current_ws)
+    next_label = format_week_label(next_ws)
+
+    if lock_exists(current_ws):
+        st.info(
+            f"The current week ({current_label}) is **locked**. "
+            f"Changes saved here will take effect starting **{next_label}**. "
+            f"Review settings by Wednesday to lock them for next week."
+        )
+    else:
+        st.warning(
+            f"The current week ({current_label}) is **not yet locked**. "
+            f"Settings will be locked when the first AVS report runs this week. "
+            f"Review and update settings now before running a report."
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -289,10 +350,16 @@ elif page == "AVS Weekly Report":
 
         try:
             with st.spinner("Generating weekly report..."):
+                # Use locked config for the report week
                 ref_data = load_reference_data()
                 band_goals = load_band_goals()
-                buf = generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_dates)
+                locked = ensure_current_week_locked(ref_data, band_goals, start_date)
+                # Build ref_data and band_goals from locked values
+                locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
+                buf = generate_weekly_report(adp_file, sales_file, locked, locked_band_goals, report_dates)
             st.success("Report generated!")
+            ws = get_week_start(start_date)
+            st.caption(f"Used locked config for week: {format_week_label(ws)}")
             st.download_button("Download Weekly Report",
                                data=buf,
                                file_name=f"AVS_Labor_Report_{start_date.strftime('%m%d%Y')}.xlsx",
@@ -331,8 +398,12 @@ elif page == "AVS Mid-Week Pulse":
             with st.spinner("Generating mid-week report..."):
                 ref_data = load_reference_data()
                 band_goals = load_band_goals()
-                buf = generate_midweek_report(adp_file, ref_data, band_goals, report_dates)
+                locked = ensure_current_week_locked(ref_data, band_goals, start_date)
+                locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
+                buf = generate_midweek_report(adp_file, locked, locked_band_goals, report_dates)
             st.success("Report generated!")
+            ws = get_week_start(start_date)
+            st.caption(f"Used locked config for week: {format_week_label(ws)}")
             st.download_button("Download Mid-Week Report",
                                data=buf,
                                file_name=f"AVS_MidWeek_Report_{start_date.strftime('%m%d%Y')}.xlsx",
@@ -371,8 +442,12 @@ elif page == "AVS Tuesday Report":
             with st.spinner("Generating Tuesday report..."):
                 ref_data = load_reference_data()
                 band_goals = load_band_goals()
-                buf = generate_tuesday_report(adp_file, ref_data, band_goals, report_dates)
+                locked = ensure_current_week_locked(ref_data, band_goals, start_date)
+                locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
+                buf = generate_tuesday_report(adp_file, locked, locked_band_goals, report_dates)
             st.success("Report generated!")
+            ws = get_week_start(start_date)
+            st.caption(f"Used locked config for week: {format_week_label(ws)}")
             st.download_button("Download Tuesday Report",
                                data=buf,
                                file_name=f"AVS_Tuesday_Report_{start_date.strftime('%m%d%Y')}.xlsx",
@@ -380,6 +455,104 @@ elif page == "AVS Tuesday Report":
                                use_container_width=True)
         except Exception as e:
             st.error(f"Error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Performance Review
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Performance Review":
+    st.title("Performance Review")
+    st.caption("Compare store performance (Goal vs Actual hours) across weeks.")
+
+    locked_weeks = get_locked_weeks()
+    if not locked_weeks:
+        st.info("No weekly data available yet. Run AVS reports to build history.")
+        st.stop()
+
+    # --- Filter controls ---
+    col_filter1, col_filter2, col_filter3 = st.columns(3)
+    with col_filter1:
+        period_filter = st.selectbox("View by", ["All Weeks", "Month", "Quarter", "Year"], key="perf_period")
+    with col_filter2:
+        if period_filter == "Month":
+            months_available = sorted(set((w.year, w.month) for w in locked_weeks))
+            month_labels = [f"{y}-{m:02d}" for y, m in months_available]
+            selected_month = st.selectbox("Select Month", month_labels, key="perf_month")
+            sel_year, sel_month = int(selected_month[:4]), int(selected_month[5:])
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month == sel_month]
+        elif period_filter == "Quarter":
+            quarters_available = sorted(set((w.year, (w.month - 1) // 3 + 1) for w in locked_weeks))
+            quarter_labels = [f"{y} Q{q}" for y, q in quarters_available]
+            selected_quarter = st.selectbox("Select Quarter", quarter_labels, key="perf_quarter")
+            sel_year = int(selected_quarter[:4])
+            sel_q = int(selected_quarter[-1])
+            q_months = [(sel_q - 1) * 3 + 1, (sel_q - 1) * 3 + 2, (sel_q - 1) * 3 + 3]
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month in q_months]
+        elif period_filter == "Year":
+            years_available = sorted(set(w.year for w in locked_weeks))
+            selected_year = st.selectbox("Select Year", years_available, key="perf_year")
+            filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
+        else:
+            filtered_weeks = locked_weeks
+    with col_filter3:
+        group_by = st.selectbox("Group by", ["Store", "DM", "Revenue Band"], key="perf_group")
+
+    if not filtered_weeks:
+        st.warning("No data for the selected period.")
+        st.stop()
+
+    # --- Build performance data from locked weeks ---
+    from weekly_lock import load_all_locks
+    all_locks = load_all_locks()
+    week_strs = [str(w) for w in filtered_weeks]
+    perf_data = all_locks[all_locks["week_start"].isin(week_strs)].copy()
+    perf_data["hourly_goal"] = pd.to_numeric(perf_data["hourly_goal"], errors="coerce").fillna(0)
+
+    st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} to {format_week_label(filtered_weeks[-1])}")
+    st.caption(f"{len(filtered_weeks)} week(s) selected")
+
+    if group_by == "Store":
+        # Pivot: rows = stores, columns = weeks
+        pivot = perf_data.pivot_table(
+            index=["location_id", "store_name"],
+            columns="week_start",
+            values="hourly_goal",
+            aggfunc="first",
+        ).reset_index()
+        pivot.columns.name = None
+        display = pivot.rename(columns={"location_id": "Store #", "store_name": "Store Name"})
+        display = display.sort_values("Store #").reset_index(drop=True)
+        st.dataframe(display, use_container_width=True, height=500)
+
+    elif group_by == "DM":
+        dm_summary = perf_data.groupby(["week_start", "dm"]).agg(
+            total_goal=("hourly_goal", "sum"),
+            store_count=("location_id", "count"),
+        ).reset_index()
+        pivot = dm_summary.pivot_table(
+            index="dm", columns="week_start", values="total_goal", aggfunc="first"
+        ).reset_index()
+        pivot.columns.name = None
+        pivot = pivot.rename(columns={"dm": "DM"}).sort_values("DM")
+        st.dataframe(pivot, use_container_width=True, height=400)
+
+    elif group_by == "Revenue Band":
+        band_summary = perf_data.groupby(["week_start", "revenue_band"]).agg(
+            avg_goal=("hourly_goal", "mean"),
+            store_count=("location_id", "count"),
+        ).reset_index()
+        pivot = band_summary.pivot_table(
+            index="revenue_band", columns="week_start", values="avg_goal", aggfunc="first"
+        ).reset_index()
+        pivot.columns.name = None
+        pivot = pivot.rename(columns={"revenue_band": "Revenue Band"})
+        st.dataframe(pivot, use_container_width=True, height=400)
+
+    st.info(
+        "This page currently shows the locked hourly goals per week. "
+        "Once you start running AVS reports, actual labor hours will also be "
+        "captured here for Goal vs Actual comparison."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -480,7 +653,9 @@ elif page == "Manage Stores":
 # ═══════════════════════════════════════════════════════════════════════════════
 elif page == "Store Revenue Bands":
     st.title("Store Revenue Bands")
-    st.caption("Assign a revenue band to each store. Changes are saved and used by all AVS reports.")
+    st.caption("Assign a revenue band to each store. Changes apply to the next unlocked week.")
+
+    show_week_deadline_banner()
 
     if not REFERENCE_DATA_PATH.exists():
         st.error("Reference data file not found. Please add stores first.")
@@ -524,7 +699,7 @@ elif page == "Store Revenue Bands":
         for store_id, band in new_bands.items():
             ref_df.loc[ref_df["location_id"] == store_id, "revenue_band"] = band
         ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
-        st.success("Revenue bands saved!")
+        st.success("Revenue bands saved! These will apply to the next unlocked week.")
         st.rerun()
 
 
@@ -534,6 +709,8 @@ elif page == "Store Revenue Bands":
 elif page == "DM Assignments":
     st.title("DM Assignments")
     st.caption("Manage the list of District Managers and assign stores to DMs.")
+
+    show_week_deadline_banner()
 
     # --- DM List Management ---
     st.subheader("DM List")
@@ -610,7 +787,7 @@ elif page == "DM Assignments":
         for store_id, dm in new_dms.items():
             ref_df.loc[ref_df["location_id"] == store_id, "dm"] = dm
         ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
-        st.success("DM assignments saved!")
+        st.success("DM assignments saved! These will apply to the next unlocked week.")
         st.rerun()
 
 
@@ -619,7 +796,9 @@ elif page == "DM Assignments":
 # ═══════════════════════════════════════════════════════════════════════════════
 elif page == "Hourly Goals":
     st.title("Hourly Goals by Revenue Band")
-    st.caption("Edit the weekly hourly goal for each revenue band. Changes apply to all AVS reports.")
+    st.caption("Edit the weekly hourly goal for each revenue band. Changes apply to the next unlocked week.")
+
+    show_week_deadline_banner()
 
     band_goals = load_band_goals()
 
@@ -649,5 +828,210 @@ elif page == "Hourly Goals":
             for band, goal in new_goals.items()
         ])
         goals_df.to_csv(BAND_GOALS_PATH, sep="|", index=False)
-        st.success("Hourly goals saved!")
+        st.success("Hourly goals saved! These will apply to the next unlocked week.")
         st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Weekly Config (Admin)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Weekly Config":
+    st.title("Weekly Config Override")
+    st.caption("View and override locked weekly configurations. Admin only.")
+
+    if not user_is_admin:
+        st.error("You do not have admin access.")
+        st.stop()
+
+    locked_weeks = get_locked_weeks()
+    if not locked_weeks:
+        st.info("No weeks have been locked yet. Locks are created when AVS reports are run.")
+        st.stop()
+
+    # Week selector
+    week_labels = {w: format_week_label(w) for w in locked_weeks}
+    selected_week = st.selectbox(
+        "Select Week",
+        locked_weeks,
+        format_func=lambda w: f"{w} — {week_labels[w]}",
+        index=len(locked_weeks) - 1,  # default to most recent
+    )
+
+    locked = load_locked_config(selected_week)
+    if locked is None:
+        st.error("Could not load locked config for this week.")
+        st.stop()
+
+    st.subheader(f"Locked Config: {week_labels[selected_week]}")
+
+    # Show source info
+    from weekly_lock import load_all_locks
+    all_locks = load_all_locks()
+    week_data = all_locks[all_locks["week_start"] == str(selected_week)]
+    sources = week_data["source"].unique().tolist() if "source" in week_data.columns else []
+    if sources:
+        source_str = ", ".join(sources)
+        if "auto-carry-forward" in sources:
+            st.warning(f"Source: {source_str} — This week's config was auto-carried from the previous week.")
+        else:
+            st.success(f"Source: {source_str}")
+
+    # Display locked config
+    display = locked[["location_id", "store_name", "dm", "revenue_band", "hourly_goal"]].copy()
+    display.columns = ["Store #", "Store Name", "DM", "Revenue Band", "Hourly Goal"]
+    display = display.sort_values("Store #").reset_index(drop=True)
+    display.index = display.index + 1
+    st.dataframe(display, use_container_width=True, height=400)
+
+    # Override form
+    st.divider()
+    st.subheader("Override a Value")
+    st.caption("Changes are logged with your email and timestamp.")
+
+    store_options = locked.sort_values("location_id").apply(
+        lambda r: f"{r['location_id']}  —  {r['store_name']}", axis=1
+    ).tolist()
+
+    with st.form("override_form"):
+        override_store = st.selectbox("Store", store_options, index=None, placeholder="Choose a store...")
+        override_field = st.selectbox("Field to Override", ["dm", "revenue_band", "hourly_goal"])
+
+        if override_field == "revenue_band":
+            override_value = st.selectbox("New Value", BAND_OPTIONS)
+        elif override_field == "hourly_goal":
+            override_value = st.number_input("New Value", min_value=0, max_value=9999, step=1)
+        else:
+            dm_list = load_dm_list()
+            override_value = st.selectbox("New Value", dm_list if dm_list else [""])
+
+        override_btn = st.form_submit_button("Apply Override", type="primary")
+
+    if override_btn:
+        if override_store is None:
+            st.error("Please select a store.")
+        else:
+            store_id = override_store.split("  —  ")[0].strip()
+            try:
+                override_locked_value(
+                    selected_week, store_id, override_field,
+                    override_value, current_user or "admin"
+                )
+                st.success(f"Override applied: {store_id} {override_field} = {override_value}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Change Log (Admin)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Change Log":
+    st.title("Change Log")
+    st.caption("Audit trail of all weekly config changes and overrides. Admin only.")
+
+    if not user_is_admin:
+        st.error("You do not have admin access.")
+        st.stop()
+
+    log_df = load_change_log()
+
+    if log_df.empty:
+        st.info("No changes logged yet.")
+        st.stop()
+
+    # Filters
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        action_filter = st.multiselect(
+            "Filter by Action",
+            log_df["action"].unique().tolist(),
+            default=log_df["action"].unique().tolist(),
+        )
+    with col2:
+        if "week_start" in log_df.columns:
+            week_filter = st.multiselect(
+                "Filter by Week",
+                sorted(log_df["week_start"].unique().tolist()),
+                default=sorted(log_df["week_start"].unique().tolist()),
+            )
+        else:
+            week_filter = []
+    with col3:
+        if "user_email" in log_df.columns:
+            user_filter = st.multiselect(
+                "Filter by User",
+                sorted(log_df["user_email"].unique().tolist()),
+                default=sorted(log_df["user_email"].unique().tolist()),
+            )
+        else:
+            user_filter = []
+
+    filtered = log_df.copy()
+    if action_filter:
+        filtered = filtered[filtered["action"].isin(action_filter)]
+    if week_filter:
+        filtered = filtered[filtered["week_start"].isin(week_filter)]
+    if user_filter:
+        filtered = filtered[filtered["user_email"].isin(user_filter)]
+
+    filtered = filtered.sort_values("timestamp", ascending=False).reset_index(drop=True)
+    filtered.index = filtered.index + 1
+
+    st.subheader(f"Log Entries ({len(filtered)})")
+    st.dataframe(filtered, use_container_width=True, height=500)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Admin Users (Admin)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Admin Users":
+    st.title("Admin Users")
+    st.caption("Manage who has admin access to weekly config overrides and change logs.")
+
+    if not user_is_admin:
+        st.error("You do not have admin access.")
+        st.stop()
+
+    admins = load_admin_users()
+
+    st.subheader(f"Current Admins ({len(admins)})")
+    for i, email in enumerate(sorted(admins), 1):
+        st.text(f"{i}. {email}")
+
+    st.divider()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Add Admin")
+        with st.form("add_admin_form", clear_on_submit=True):
+            new_admin_email = st.text_input("Email Address", placeholder="e.g. user@example.com")
+            add_admin_btn = st.form_submit_button("Add Admin", type="primary")
+
+        if add_admin_btn:
+            email_clean = new_admin_email.strip().lower()
+            if not email_clean:
+                st.error("Please enter an email address.")
+            elif "@" not in email_clean:
+                st.error("Please enter a valid email address.")
+            elif email_clean in admins:
+                st.error(f"{email_clean} is already an admin.")
+            else:
+                add_admin(email_clean)
+                st.success(f"Added admin: {email_clean}")
+                st.rerun()
+
+    with col2:
+        st.subheader("Remove Admin")
+        if len(admins) > 1:
+            with st.form("remove_admin_form"):
+                remove_email = st.selectbox("Select Admin to Remove", sorted(admins), index=None, placeholder="Choose...")
+                remove_admin_btn = st.form_submit_button("Remove Admin")
+
+            if remove_admin_btn and remove_email:
+                if remove_email == current_user:
+                    st.error("You cannot remove yourself as admin.")
+                else:
+                    remove_admin(remove_email)
+                    st.success(f"Removed admin: {remove_email}")
+                    st.rerun()
+        else:
+            st.info("Cannot remove the last admin.")
