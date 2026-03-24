@@ -54,14 +54,12 @@ st.set_page_config(page_title="Ram-Z Accounting Toolbox", layout="wide")
 # ---------------------------------------------------------------------------
 # Navigation
 # ---------------------------------------------------------------------------
-st.sidebar.header("Accounting")
 accounting_pages = [
     "FZ Fee Reconciliation",
     "AVS Weekly Report",
     "AVS Mid-Week Pulse",
     "AVS Tuesday Report",
 ]
-st.sidebar.header("Settings")
 settings_pages = [
     "Manage Stores",
     "Store Revenue Bands",
@@ -69,12 +67,15 @@ settings_pages = [
     "Hourly Goals",
 ]
 
-all_pages = accounting_pages + settings_pages
-page = st.sidebar.radio(
-    "Navigation",
-    all_pages,
-    label_visibility="collapsed",
-)
+st.sidebar.header("Accounting")
+page = st.sidebar.radio("Accounting Nav", accounting_pages, label_visibility="collapsed")
+
+with st.sidebar.expander("Settings", expanded=False):
+    settings_choice = st.radio("Settings Nav", settings_pages, index=None, label_visibility="collapsed")
+
+# If a settings page is selected, override the page
+if settings_choice is not None:
+    page = settings_choice
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -83,45 +84,44 @@ page = st.sidebar.radio(
 if page == "FZ Fee Reconciliation":
     st.title("FZ Fee Reconciliation")
 
-    with st.sidebar:
-        st.divider()
-        st.subheader("Input Files")
+    # --- Input Files (main content area) ---
+    st.subheader("Input Files")
 
-        if LOCATIONS_PATH.exists():
-            loc_df = pd.read_csv(LOCATIONS_PATH, sep="|", dtype=str)
-            st.success(f"Locations master: {len(loc_df)} stores")
-            locations_source = str(LOCATIONS_PATH)
-        else:
-            st.warning("locations.csv not found — please upload it.")
-            loc_upload = st.file_uploader("Locations Master (.csv)", type=["csv"], key="loc")
-            locations_source = loc_upload
+    if LOCATIONS_PATH.exists():
+        loc_df = pd.read_csv(LOCATIONS_PATH, sep="|", dtype=str)
+        st.success(f"Locations master: {len(loc_df)} stores")
+        locations_source = str(LOCATIONS_PATH)
+    else:
+        st.warning("locations.csv not found — please upload it.")
+        loc_upload = st.file_uploader("Locations Master (.csv)", type=["csv"], key="loc")
+        locations_source = loc_upload
 
-        st.divider()
+    col_fz, col_bank = st.columns(2)
+    with col_fz:
         fz_file = st.file_uploader("FZ Fee Schedule (.xlsx)", type=["xlsx"], key="fz",
                                     help="Weekly fee schedule from the franchisor.")
-        st.divider()
+    with col_bank:
         bank_file = st.file_uploader("Bank Data (.xlsx) — optional", type=["xlsx"], key="bank",
                                       help="Bank ACH transaction export. Leave blank to run FZ-only.")
 
-        st.divider()
-        detected_bank_date = None
-        if bank_file is not None:
-            detected_str = detect_bank_date(bank_file)
-            bank_file.seek(0)
-            if detected_str:
-                try:
-                    detected_bank_date = datetime.strptime(detected_str, "%m/%d/%Y").date()
-                except ValueError:
-                    pass
+    detected_bank_date = None
+    if bank_file is not None:
+        detected_str = detect_bank_date(bank_file)
+        bank_file.seek(0)
+        if detected_str:
+            try:
+                detected_bank_date = datetime.strptime(detected_str, "%m/%d/%Y").date()
+            except ValueError:
+                pass
 
-        bank_date = st.date_input("Bank Date",
-                                   value=detected_bank_date or datetime.today().date(),
-                                   help="Date label for the bank data. Auto-detected when possible.")
-        if detected_bank_date:
-            st.caption(f"Auto-detected from file: {detected_bank_date.strftime('%m/%d/%Y')}")
+    bank_date = st.date_input("Bank Date",
+                               value=detected_bank_date or datetime.today().date(),
+                               help="Date label for the bank data. Auto-detected when possible.")
+    if detected_bank_date:
+        st.caption(f"Auto-detected from file: {detected_bank_date.strftime('%m/%d/%Y')}")
 
-        st.divider()
-        run_btn = st.button("Run Reconciliation", type="primary", use_container_width=True)
+    st.divider()
+    run_btn = st.button("Run Reconciliation", type="primary", use_container_width=True)
 
     if run_btn:
         if locations_source is None:
