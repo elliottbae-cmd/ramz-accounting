@@ -64,9 +64,16 @@ st.set_page_config(page_title="Ram-Z Accounting Toolbox", layout="wide")
 def get_current_user_email():
     """Get the current user's email from Streamlit Cloud auth."""
     try:
-        user_info = st.experimental_user
-        if user_info and hasattr(user_info, "email") and user_info.email:
-            return user_info.email.strip().lower()
+        # Streamlit >= 1.37 uses st.context
+        if hasattr(st, "context") and hasattr(st.context, "user"):
+            user_info = st.context.user
+            if user_info and hasattr(user_info, "email") and user_info.email:
+                return user_info.email.strip().lower()
+        # Older Streamlit uses st.experimental_user
+        if hasattr(st, "experimental_user"):
+            user_info = st.experimental_user
+            if user_info and hasattr(user_info, "email") and user_info.email:
+                return user_info.email.strip().lower()
     except Exception:
         pass
     return ""
@@ -75,44 +82,66 @@ current_user = get_current_user_email()
 user_is_admin = is_admin(current_user) if current_user else True  # Default admin if no auth
 
 # ---------------------------------------------------------------------------
-# Navigation
+# Navigation — use session state to avoid sticky radio buttons
 # ---------------------------------------------------------------------------
-accounting_pages = [
-    "FZ Fee Reconciliation",
-    "AVS Weekly Report",
-    "AVS Mid-Week Pulse",
-    "AVS Tuesday Report",
-    "Performance Review",
-]
-settings_pages = [
-    "Manage Stores",
-    "Store Revenue Bands",
-    "DM Assignments",
-    "Hourly Goals",
-]
-admin_pages = [
-    "Weekly Config",
-    "Change Log",
-    "Admin Users",
-]
+ALL_PAGES = {
+    "accounting": [
+        "FZ Fee Reconciliation",
+        "AVS Weekly Report",
+        "AVS Mid-Week Pulse",
+        "AVS Tuesday Report",
+        "Performance Review",
+    ],
+    "settings": [
+        "Manage Stores",
+        "Store Revenue Bands",
+        "DM Assignments",
+        "Hourly Goals",
+    ],
+    "admin": [
+        "Weekly Config",
+        "Change Log",
+        "Admin Users",
+    ],
+}
+
+if "active_page" not in st.session_state:
+    st.session_state["active_page"] = "FZ Fee Reconciliation"
+if "active_section" not in st.session_state:
+    st.session_state["active_section"] = "accounting"
+
+
+def set_page(section, page_name):
+    st.session_state["active_page"] = page_name
+    st.session_state["active_section"] = section
+
 
 st.sidebar.header("Accounting")
-page = st.sidebar.radio("Accounting Nav", accounting_pages, label_visibility="collapsed")
+for p in ALL_PAGES["accounting"]:
+    is_active = st.session_state["active_page"] == p
+    label = f"**{p}**" if is_active else p
+    if st.sidebar.button(label, key=f"nav_acct_{p}", use_container_width=True):
+        set_page("accounting", p)
+        st.rerun()
 
-with st.sidebar.expander("Settings", expanded=False):
-    settings_choice = st.radio("Settings Nav", settings_pages, index=None, label_visibility="collapsed")
+with st.sidebar.expander("Settings", expanded=st.session_state["active_section"] == "settings"):
+    for p in ALL_PAGES["settings"]:
+        is_active = st.session_state["active_page"] == p
+        label = f"**{p}**" if is_active else p
+        if st.button(label, key=f"nav_set_{p}", use_container_width=True):
+            set_page("settings", p)
+            st.rerun()
 
 if user_is_admin:
-    with st.sidebar.expander("Admin", expanded=False):
-        admin_choice = st.radio("Admin Nav", admin_pages, index=None, label_visibility="collapsed")
-else:
-    admin_choice = None
+    with st.sidebar.expander("Admin", expanded=st.session_state["active_section"] == "admin"):
+        for p in ALL_PAGES["admin"]:
+            is_active = st.session_state["active_page"] == p
+            label = f"**{p}**" if is_active else p
+            if st.button(label, key=f"nav_admin_{p}", use_container_width=True):
+                set_page("admin", p)
+                st.rerun()
 
-# If a settings/admin page is selected, override the page
-if settings_choice is not None:
-    page = settings_choice
-if admin_choice is not None:
-    page = admin_choice
+page = st.session_state["active_page"]
 
 # ---------------------------------------------------------------------------
 # Week deadline banner helper
