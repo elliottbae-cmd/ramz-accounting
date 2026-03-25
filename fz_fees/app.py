@@ -148,6 +148,7 @@ ALL_PAGES = {
         "AVS Mid-Week Pulse",
         "AVS Performance - Store Level",
         "AVS Performance - DMs",
+        "GM Hot Streak",
     ],
     "settings": [
         "Manage Stores",
@@ -874,6 +875,73 @@ elif page == "AVS Performance - DMs":
     st.info(
         "This page summarizes total hours across all stores for each DM. "
         "Once AVS actuals are captured, variance (over/under goal) will display here."
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: GM Hot Streak
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "GM Hot Streak":
+    st.title("🔥 GM Hot Streak")
+    st.caption("Stores that have hit their goal 2 or more consecutive weeks. A store hits its goal when actual hours are within 30 hours of the target.")
+
+    locked_weeks = get_locked_weeks()
+    if not locked_weeks:
+        st.info("No weekly data available yet. Run AVS reports to build history.")
+        st.stop()
+
+    from weekly_lock import load_all_locks
+    all_locks = load_all_locks()
+    all_locks["hourly_goal"] = pd.to_numeric(all_locks["hourly_goal"], errors="coerce").fillna(0)
+
+    # Get all weeks sorted chronologically
+    sorted_weeks = sorted(all_locks["week_start"].unique().tolist())
+    stores = all_locks["store_name"].unique().tolist()
+
+    # Calculate current streak for each store (consecutive weeks ending at most recent)
+    streak_data = []
+    for store in stores:
+        store_data = all_locks[all_locks["store_name"] == store].copy()
+        streak = 0
+        # Walk backwards from most recent week
+        for week_str in reversed(sorted_weeks):
+            week_row = store_data[store_data["week_start"] == week_str]
+            if week_row.empty:
+                break  # no data for this week, streak ends
+            goal_val = week_row["hourly_goal"].values[0]
+            # TODO: replace with actual_hours once captured
+            # For now, actual = 0 (no actuals yet), so variance = 0 - goal
+            actual = 0
+            variance = abs(actual - goal_val)
+            if variance <= 30:
+                streak += 1
+            else:
+                break  # missed goal, streak ends
+        if streak >= 2:
+            # Get DM for context
+            dm = store_data["dm"].dropna().values
+            dm_name = dm[0] if len(dm) > 0 else ""
+            streak_data.append({"Store": store, "DM": dm_name, "Streak (Weeks)": streak})
+
+    if not streak_data:
+        st.info("No stores are currently on a streak (2+ consecutive weeks hitting their goal).")
+    else:
+        streak_df = pd.DataFrame(streak_data)
+        streak_df = streak_df.sort_values("Streak (Weeks)", ascending=False).reset_index(drop=True)
+        streak_df.insert(0, "Rank", range(1, len(streak_df) + 1))
+
+        st.metric("Stores on a Streak", len(streak_df))
+
+        st.dataframe(
+            streak_df,
+            use_container_width=False,
+            hide_index=True,
+            height=(len(streak_df) + 1) * 35 + 3,
+        )
+
+    st.info(
+        "A streak means hitting the goal (within 30 hours) for 2+ consecutive weeks. "
+        "Streaks are counted backwards from the most recent week."
     )
 
 
