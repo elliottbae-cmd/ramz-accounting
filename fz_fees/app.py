@@ -108,14 +108,29 @@ section[data-testid="stSidebar"] button[kind="secondary"]:hover {
 section[data-testid="stSidebar"] details {
     margin-top: 0.25rem;
     margin-bottom: 0.25rem;
+    background: transparent !important;
+    border: none !important;
 }
 section[data-testid="stSidebar"] details summary {
     padding: 0.3rem 0;
     font-size: 0.85rem;
+    background: transparent !important;
+}
+section[data-testid="stSidebar"] details[open] {
+    background: transparent !important;
 }
 section[data-testid="stSidebar"] details[open] [data-testid="stVerticalBlock"] {
     gap: 0.1rem;
     padding-left: 0.5rem;
+}
+/* Remove white background from expander container */
+section[data-testid="stSidebar"] [data-testid="stExpander"] {
+    background: transparent !important;
+    border: none !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+section[data-testid="stSidebar"] [data-testid="stExpander"] > div {
+    background: transparent !important;
 }
 
 /* Sidebar header — gold accent */
