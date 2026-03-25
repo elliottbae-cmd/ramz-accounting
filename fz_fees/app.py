@@ -147,6 +147,7 @@ ALL_PAGES = {
         "AVS Weekly Report",
         "AVS Mid-Week Pulse",
         "AVS Performance - Store Level",
+        "AVS Performance - DMs",
     ],
     "settings": [
         "Manage Stores",
@@ -679,6 +680,150 @@ elif page == "AVS Performance - Store Level":
         "This page currently shows the locked hourly goals per week. "
         "Once you start running AVS reports, actual labor hours will also be "
         "captured here for Goal vs Actual comparison."
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: AVS Performance - DMs
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "AVS Performance - DMs":
+    st.title("AVS Performance - DMs")
+    st.caption("Summarized DM performance across all their stores by week.")
+
+    locked_weeks = get_locked_weeks()
+    if not locked_weeks:
+        st.info("No weekly data available yet. Run AVS reports to build history.")
+        st.stop()
+
+    # --- Load all data up front for filter options ---
+    from weekly_lock import load_all_locks
+    all_locks = load_all_locks()
+
+    # --- Period filter ---
+    col_period, col_period_val = st.columns(2)
+    with col_period:
+        period_filter = st.selectbox("View by", ["All Weeks", "Month", "Quarter", "Year"], key="dm_perf_period")
+    with col_period_val:
+        if period_filter == "Month":
+            months_available = sorted(set((w.year, w.month) for w in locked_weeks))
+            month_labels = [f"{y}-{m:02d}" for y, m in months_available]
+            selected_month = st.selectbox("Select Month", month_labels, key="dm_perf_month")
+            sel_year, sel_month = int(selected_month[:4]), int(selected_month[5:])
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month == sel_month]
+        elif period_filter == "Quarter":
+            quarters_available = sorted(set((w.year, (w.month - 1) // 3 + 1) for w in locked_weeks))
+            quarter_labels = [f"{y} Q{q}" for y, q in quarters_available]
+            selected_quarter = st.selectbox("Select Quarter", quarter_labels, key="dm_perf_quarter")
+            sel_year = int(selected_quarter[:4])
+            sel_q = int(selected_quarter[-1])
+            q_months = [(sel_q - 1) * 3 + 1, (sel_q - 1) * 3 + 2, (sel_q - 1) * 3 + 3]
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month in q_months]
+        elif period_filter == "Year":
+            years_available = sorted(set(w.year for w in locked_weeks))
+            selected_year = st.selectbox("Select Year", years_available, key="dm_perf_year")
+            filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
+        else:
+            filtered_weeks = locked_weeks
+
+    if not filtered_weeks:
+        st.warning("No data for the selected period.")
+        st.stop()
+
+    # --- Filter by DM ---
+    week_strs = [str(w) for w in filtered_weeks]
+    perf_data = all_locks[all_locks["week_start"].isin(week_strs)].copy()
+    perf_data["hourly_goal"] = pd.to_numeric(perf_data["hourly_goal"], errors="coerce").fillna(0)
+
+    dm_list = sorted(perf_data["dm"].dropna().unique().tolist())
+    selected_dms = st.multiselect("Filter by DM", dm_list, default=[], key="dm_perf_dm_filter")
+
+    if selected_dms:
+        perf_data = perf_data[perf_data["dm"].isin(selected_dms)]
+
+    if perf_data.empty:
+        st.warning("No data matches the selected filters.")
+        st.stop()
+
+    st.divider()
+    st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} → {format_week_label(filtered_weeks[-1])}")
+    st.caption(f"{len(filtered_weeks)} week(s)  ·  {perf_data['dm'].nunique()} DM(s)  ·  {perf_data['store_name'].nunique()} store(s)")
+
+    # --- Summarize by DM: total goal across all their stores per week ---
+    dm_summary = perf_data.groupby(["dm", "week_start"]).agg(
+        total_goal=("hourly_goal", "sum"),
+        store_count=("store_name", "nunique"),
+    ).reset_index()
+
+    # Pivot: DMs as rows, weeks as columns (showing total goal sum)
+    pivot = dm_summary.pivot_table(
+        index="dm",
+        columns="week_start",
+        values="total_goal",
+        aggfunc="first",
+    ).reset_index()
+    pivot.columns.name = None
+    pivot = pivot.rename(columns={"dm": "DM"})
+    pivot = pivot.sort_values("DM").reset_index(drop=True)
+
+    # Add store count column
+    dm_store_counts = perf_data.groupby("dm")["store_name"].nunique().reset_index()
+    dm_store_counts.columns = ["DM", "Stores"]
+    pivot = pivot.merge(dm_store_counts, on="DM", how="left")
+    # Move Stores column to second position
+    cols = pivot.columns.tolist()
+    cols.remove("Stores")
+    cols.insert(1, "Stores")
+    pivot = pivot[cols]
+
+    # Build goal lookup and zero out actuals (not yet captured)
+    week_cols = [c for c in pivot.columns if c not in ("DM", "Stores")]
+    goal_pivot = pivot.copy()  # preserve goals for color coding
+    for wc in week_cols:
+        pivot[wc] = 0
+
+    # Rename week columns to end date (Wednesday) labels (e.g. "Wk 3/25")
+    week_col_map = {}
+    for col in week_cols:
+        try:
+            d = date.fromisoformat(col)
+            end_d = d + timedelta(days=6)
+            week_col_map[col] = f"Wk {end_d.month}/{end_d.day}"
+        except (ValueError, TypeError):
+            pass
+    pivot = pivot.rename(columns=week_col_map)
+    goal_pivot = goal_pivot.rename(columns=week_col_map)
+
+    # --- Color coding: compare actuals vs goals (summed across DM's stores) ---
+    # No data (0) = no color | Within 30 hrs of goal = light green | Off by 30+ = light red
+    def color_dm_cells(row):
+        styles = [""] * len(row)
+        for i, col in enumerate(row.index):
+            if col in ("DM", "Stores"):
+                continue
+            actual = row[col]
+            goal = goal_pivot.loc[goal_pivot["DM"] == row["DM"], col].values
+            goal_val = goal[0] if len(goal) > 0 else 0
+            if actual == 0:
+                styles[i] = ""  # no color for missing data
+            elif abs(actual - goal_val) > 30:
+                styles[i] = "background-color: #ffcccc"  # light red
+            else:
+                styles[i] = "background-color: #ccffcc"  # light green
+        return styles
+
+    styled = pivot.style.apply(color_dm_cells, axis=1)
+
+    # Display all rows — no internal scroll
+    st.dataframe(
+        styled,
+        use_container_width=False,
+        hide_index=True,
+        height=(len(pivot) + 1) * 35 + 3,
+    )
+
+    st.info(
+        "This page summarizes total hours across all stores for each DM. "
+        "Once AVS actuals are captured, variance (over/under goal) will display here."
     )
 
 
