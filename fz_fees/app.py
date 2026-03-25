@@ -70,6 +70,7 @@ def _cached_dm_list():
 
 @st.cache_data(ttl=60)
 def _cached_all_locks():
+    from weekly_lock import load_all_locks
     return load_all_locks()
 
 # ---------------------------------------------------------------------------
