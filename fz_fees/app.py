@@ -235,8 +235,8 @@ if _LOGO_PATH.exists():
     st.sidebar.image(str(_LOGO_PATH), use_container_width=True)
     st.sidebar.markdown("---")
 
-render_nav_section("Accounting", "accounting")
-render_nav_section("Labor", "labor")
+render_nav_section("Accounting", "accounting", use_expander=True)
+render_nav_section("Labor", "labor", use_expander=True)
 render_nav_section("Settings", "settings", use_expander=True)
 if user_is_admin:
     render_nav_section("Admin", "admin", use_expander=True)
