@@ -54,6 +54,25 @@ BAND_OPTIONS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Cached data loaders (avoid re-reading CSV on every Streamlit rerun)
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=60)
+def _cached_reference_data():
+    return load_reference_data()
+
+@st.cache_data(ttl=60)
+def _cached_band_goals():
+    return load_band_goals()
+
+@st.cache_data(ttl=60)
+def _cached_dm_list():
+    return load_dm_list()
+
+@st.cache_data(ttl=60)
+def _cached_all_locks():
+    return load_all_locks()
+
+# ---------------------------------------------------------------------------
 # Page setup
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Ram-Z Accounting Toolbox", layout="wide")
@@ -503,8 +522,8 @@ elif page == "AVS Weekly Report":
         try:
             with st.spinner("Generating weekly report..."):
                 # Use locked config for the report week
-                ref_data = load_reference_data()
-                band_goals = load_band_goals()
+                ref_data = _cached_reference_data()
+                band_goals = _cached_band_goals()
                 locked = ensure_current_week_locked(ref_data, band_goals, start_date)
                 # Build ref_data and band_goals from locked values
                 locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
@@ -563,8 +582,8 @@ elif page == "AVS Mid-Week Pulse":
 
         try:
             with st.spinner("Generating mid-week report..."):
-                ref_data = load_reference_data()
-                band_goals = load_band_goals()
+                ref_data = _cached_reference_data()
+                band_goals = _cached_band_goals()
                 locked = ensure_current_week_locked(ref_data, band_goals, start_date)
                 locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
                 buf = generate_midweek_report(adp_file, locked, locked_band_goals, report_dates, through_day)
@@ -602,8 +621,7 @@ elif page == "AVS Performance - Store Level":
         st.stop()
 
     # --- Load all data up front for filter options ---
-    from weekly_lock import load_all_locks
-    all_locks = load_all_locks()
+    all_locks = _cached_all_locks()
 
     # --- Period filter ---
     col_period, col_period_val = st.columns(2)
@@ -773,8 +791,7 @@ elif page == "AVS Performance - DMs":
         st.stop()
 
     # --- Load all data up front for filter options ---
-    from weekly_lock import load_all_locks
-    all_locks = load_all_locks()
+    all_locks = _cached_all_locks()
 
     # --- Period filter ---
     col_period, col_period_val = st.columns(2)
@@ -939,8 +956,7 @@ elif page == "GM Hot Streak":
         st.info("No weekly data available yet. Run AVS reports to build history.")
         st.stop()
 
-    from weekly_lock import load_all_locks
-    all_locks = load_all_locks()
+    all_locks = _cached_all_locks()
     all_locks["hourly_goal"] = pd.to_numeric(all_locks["hourly_goal"], errors="coerce").fillna(0)
 
     # Get all weeks sorted chronologically
@@ -1047,7 +1063,7 @@ elif page == "Manage Stores":
             if REFERENCE_DATA_PATH.exists():
                 ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
                 if new_id_clean not in ref_df["location_id"].values:
-                    dm_list = load_dm_list()
+                    dm_list = _cached_dm_list()
                     new_ref = pd.DataFrame([{
                         "location_id": new_id_clean,
                         "store_name": new_name_clean,
@@ -1059,6 +1075,7 @@ elif page == "Manage Stores":
                     ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
 
             st.success(f"Added store {new_id_clean} — {new_name_clean}")
+            st.cache_data.clear()
             st.rerun()
 
     st.divider()
@@ -1082,6 +1099,7 @@ elif page == "Manage Stores":
                     ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
 
                 st.success(f"Removed store {remove_id}")
+                st.cache_data.clear()
                 st.rerun()
     else:
         st.info("No stores to remove.")
@@ -1104,7 +1122,7 @@ elif page == "Store Revenue Bands":
     ref_df = ref_df.sort_values("location_id").reset_index(drop=True)
 
     # Load band goals for the info display
-    band_goals = load_band_goals()
+    band_goals = _cached_band_goals()
 
     st.info("Each revenue band maps to an hourly goal. You can edit the goals on the **Hourly Goals** page.")
 
@@ -1139,6 +1157,7 @@ elif page == "Store Revenue Bands":
             ref_df.loc[ref_df["location_id"] == store_id, "revenue_band"] = band
         ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
         st.success("Revenue bands saved! These will apply to the next unlocked week.")
+        st.cache_data.clear()
         st.rerun()
 
 
@@ -1153,7 +1172,7 @@ elif page == "DM Assignments":
 
     # --- DM List Management ---
     st.subheader("DM List")
-    dm_list = load_dm_list()
+    dm_list = _cached_dm_list()
     st.write("Current DMs: " + ", ".join(dm_list) if dm_list else "No DMs defined.")
 
     col1, col2 = st.columns(2)
@@ -1170,6 +1189,7 @@ elif page == "DM Assignments":
                 dm_list.sort()
                 pd.DataFrame({"dm_name": dm_list}).to_csv(DM_LIST_PATH, index=False)
                 st.success(f"Added DM: {dm_name}")
+                st.cache_data.clear()
                 st.rerun()
 
     with col2:
@@ -1181,6 +1201,7 @@ elif page == "DM Assignments":
                 dm_list.remove(remove_dm)
                 pd.DataFrame({"dm_name": dm_list}).to_csv(DM_LIST_PATH, index=False)
                 st.success(f"Removed DM: {remove_dm}")
+                st.cache_data.clear()
                 st.rerun()
 
     st.divider()
@@ -1194,7 +1215,7 @@ elif page == "DM Assignments":
 
     ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
     ref_df = ref_df.sort_values("location_id").reset_index(drop=True)
-    dm_list = load_dm_list()
+    dm_list = _cached_dm_list()
 
     if not dm_list:
         st.warning("No DMs defined. Add DMs above first.")
@@ -1227,6 +1248,7 @@ elif page == "DM Assignments":
             ref_df.loc[ref_df["location_id"] == store_id, "dm"] = dm
         ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
         st.success("DM assignments saved! These will apply to the next unlocked week.")
+        st.cache_data.clear()
         st.rerun()
 
 
@@ -1239,7 +1261,7 @@ elif page == "Hourly Goals":
 
     show_week_deadline_banner()
 
-    band_goals = load_band_goals()
+    band_goals = _cached_band_goals()
 
     with st.form("hourly_goals_form"):
         new_goals = {}
@@ -1268,6 +1290,7 @@ elif page == "Hourly Goals":
         ])
         goals_df.to_csv(BAND_GOALS_PATH, sep="|", index=False)
         st.success("Hourly goals saved! These will apply to the next unlocked week.")
+        st.cache_data.clear()
         st.rerun()
 
 
@@ -1304,8 +1327,7 @@ elif page == "Weekly Config":
     st.subheader(f"Locked Config: {week_labels[selected_week]}")
 
     # Show source info
-    from weekly_lock import load_all_locks
-    all_locks = load_all_locks()
+    all_locks = _cached_all_locks()
     week_data = all_locks[all_locks["week_start"] == str(selected_week)]
     sources = week_data["source"].unique().tolist() if "source" in week_data.columns else []
     if sources:
@@ -1340,7 +1362,7 @@ elif page == "Weekly Config":
         elif override_field == "hourly_goal":
             override_value = st.number_input("New Value", min_value=0, max_value=9999, step=1)
         else:
-            dm_list = load_dm_list()
+            dm_list = _cached_dm_list()
             override_value = st.selectbox("New Value", dm_list if dm_list else [""])
 
         override_btn = st.form_submit_button("Apply Override", type="primary")
@@ -1356,6 +1378,7 @@ elif page == "Weekly Config":
                     override_value, current_user or "admin"
                 )
                 st.success(f"Override applied: {store_id} {override_field} = {override_value}")
+                st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
