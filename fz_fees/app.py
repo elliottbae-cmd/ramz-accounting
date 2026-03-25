@@ -550,11 +550,15 @@ elif page == "Performance Review":
         st.info("No weekly data available yet. Run AVS reports to build history.")
         st.stop()
 
-    # --- Filter controls ---
-    col_filter1, col_filter2, col_filter3 = st.columns(3)
-    with col_filter1:
+    # --- Load all data up front for filter options ---
+    from weekly_lock import load_all_locks
+    all_locks = load_all_locks()
+
+    # --- Period filter ---
+    col_period, col_period_val = st.columns(2)
+    with col_period:
         period_filter = st.selectbox("View by", ["All Weeks", "Month", "Quarter", "Year"], key="perf_period")
-    with col_filter2:
+    with col_period_val:
         if period_filter == "Month":
             months_available = sorted(set((w.year, w.month) for w in locked_weeks))
             month_labels = [f"{y}-{m:02d}" for y, m in months_available]
@@ -575,59 +579,68 @@ elif page == "Performance Review":
             filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
         else:
             filtered_weeks = locked_weeks
-    with col_filter3:
-        group_by = st.selectbox("Group by", ["Store", "DM", "Revenue Band"], key="perf_group")
 
     if not filtered_weeks:
         st.warning("No data for the selected period.")
         st.stop()
 
-    # --- Build performance data from locked weeks ---
-    from weekly_lock import load_all_locks
-    all_locks = load_all_locks()
+    # --- Filter by Store and DM ---
     week_strs = [str(w) for w in filtered_weeks]
     perf_data = all_locks[all_locks["week_start"].isin(week_strs)].copy()
     perf_data["hourly_goal"] = pd.to_numeric(perf_data["hourly_goal"], errors="coerce").fillna(0)
 
-    st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} to {format_week_label(filtered_weeks[-1])}")
-    st.caption(f"{len(filtered_weeks)} week(s) selected")
+    col_dm_filter, col_store_filter = st.columns(2)
+    with col_dm_filter:
+        dm_list = sorted(perf_data["dm"].dropna().unique().tolist())
+        selected_dms = st.multiselect("Filter by DM", dm_list, default=[], key="perf_dm_filter")
+    with col_store_filter:
+        # If DMs are selected, only show stores for those DMs
+        store_pool = perf_data if not selected_dms else perf_data[perf_data["dm"].isin(selected_dms)]
+        store_list = sorted(store_pool["store_name"].dropna().unique().tolist())
+        selected_stores = st.multiselect("Filter by Store", store_list, default=[], key="perf_store_filter")
 
-    if group_by == "Store":
-        # Pivot: rows = stores, columns = weeks
-        pivot = perf_data.pivot_table(
-            index=["location_id", "store_name"],
-            columns="week_start",
-            values="hourly_goal",
-            aggfunc="first",
-        ).reset_index()
-        pivot.columns.name = None
-        display = pivot.rename(columns={"location_id": "Store #", "store_name": "Store Name"})
-        display = display.sort_values("Store #").reset_index(drop=True)
-        st.dataframe(display, use_container_width=True, height=500)
+    # Apply filters
+    if selected_dms:
+        perf_data = perf_data[perf_data["dm"].isin(selected_dms)]
+    if selected_stores:
+        perf_data = perf_data[perf_data["store_name"].isin(selected_stores)]
 
-    elif group_by == "DM":
-        dm_summary = perf_data.groupby(["week_start", "dm"]).agg(
-            total_goal=("hourly_goal", "sum"),
-            store_count=("location_id", "count"),
-        ).reset_index()
-        pivot = dm_summary.pivot_table(
-            index="dm", columns="week_start", values="total_goal", aggfunc="first"
-        ).reset_index()
-        pivot.columns.name = None
-        pivot = pivot.rename(columns={"dm": "DM"}).sort_values("DM")
-        st.dataframe(pivot, use_container_width=True, height=400)
+    if perf_data.empty:
+        st.warning("No data matches the selected filters.")
+        st.stop()
 
-    elif group_by == "Revenue Band":
-        band_summary = perf_data.groupby(["week_start", "revenue_band"]).agg(
-            avg_goal=("hourly_goal", "mean"),
-            store_count=("location_id", "count"),
-        ).reset_index()
-        pivot = band_summary.pivot_table(
-            index="revenue_band", columns="week_start", values="avg_goal", aggfunc="first"
-        ).reset_index()
-        pivot.columns.name = None
-        pivot = pivot.rename(columns={"revenue_band": "Revenue Band"})
-        st.dataframe(pivot, use_container_width=True, height=400)
+    st.divider()
+    st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} → {format_week_label(filtered_weeks[-1])}")
+    st.caption(f"{len(filtered_weeks)} week(s)  ·  {perf_data['store_name'].nunique()} store(s)")
+
+    # --- Pivot: stores as rows, weeks as columns ---
+    pivot = perf_data.pivot_table(
+        index="store_name",
+        columns="week_start",
+        values="hourly_goal",
+        aggfunc="first",
+    ).reset_index()
+    pivot.columns.name = None
+    pivot = pivot.rename(columns={"store_name": "Store"})
+    pivot = pivot.sort_values("Store").reset_index(drop=True)
+
+    # Rename week columns to short readable labels (e.g. "3/20")
+    week_col_map = {}
+    for col in pivot.columns:
+        if col != "Store":
+            try:
+                d = date.fromisoformat(col)
+                week_col_map[col] = f"Wk {d.month}/{d.day}"
+            except (ValueError, TypeError):
+                pass
+    pivot = pivot.rename(columns=week_col_map)
+
+    st.dataframe(
+        pivot,
+        use_container_width=False,
+        height=min(500, 40 + len(pivot) * 35),
+        hide_index=True,
+    )
 
     st.info(
         "This page currently shows the locked hourly goals per week. "
