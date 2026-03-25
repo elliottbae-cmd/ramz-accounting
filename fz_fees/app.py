@@ -633,6 +633,33 @@ elif page == "AVS Performance - Store Level":
     for wc in week_cols:
         pivot[wc] = 0
 
+    # --- Ranking: avg variance across weeks, most over goal ranked last ---
+    # variance = actual - goal (positive = over goal, negative = under)
+    # When actuals are 0 (no data), treat variance as 0
+    variance_data = []
+    for _, row in pivot.iterrows():
+        total_var = 0
+        count = 0
+        for wc in week_cols:
+            actual = row[wc]
+            goal_vals = goal_pivot.loc[goal_pivot["Store"] == row["Store"], wc].values
+            goal_val = goal_vals[0] if len(goal_vals) > 0 else 0
+            if actual != 0 or goal_val != 0:
+                total_var += actual - goal_val
+                count += 1
+        avg_var = total_var / count if count > 0 else 0
+        variance_data.append(avg_var)
+    pivot["_sort_var"] = variance_data
+    goal_pivot["_sort_var"] = variance_data
+    # Sort: most under goal first (best), most over goal last (worst)
+    pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
+    goal_pivot = goal_pivot.sort_values("_sort_var").reset_index(drop=True)
+    # Add rank column
+    pivot.insert(0, "Rank", range(1, len(pivot) + 1))
+    goal_pivot.insert(0, "Rank", range(1, len(goal_pivot) + 1))
+    pivot = pivot.drop(columns=["_sort_var"])
+    goal_pivot = goal_pivot.drop(columns=["_sort_var"])
+
     # Rename week columns to end date (Wednesday) labels (e.g. "Wk 3/25")
     week_col_map = {}
     renamed_week_cols = []
@@ -653,7 +680,7 @@ elif page == "AVS Performance - Store Level":
     def color_cells(row):
         styles = [""] * len(row)
         for i, col in enumerate(row.index):
-            if col == "Store":
+            if col in ("Rank", "Store"):
                 continue
             actual = row[col]
             goal = goal_pivot.loc[goal_pivot["Store"] == row["Store"], col].values
@@ -781,6 +808,29 @@ elif page == "AVS Performance - DMs":
     for wc in week_cols:
         pivot[wc] = 0
 
+    # --- Ranking: avg variance across weeks, most over goal ranked last ---
+    variance_data = []
+    for _, row in pivot.iterrows():
+        total_var = 0
+        count = 0
+        for wc in week_cols:
+            actual = row[wc]
+            goal_vals = goal_pivot.loc[goal_pivot["DM"] == row["DM"], wc].values
+            goal_val = goal_vals[0] if len(goal_vals) > 0 else 0
+            if actual != 0 or goal_val != 0:
+                total_var += actual - goal_val
+                count += 1
+        avg_var = total_var / count if count > 0 else 0
+        variance_data.append(avg_var)
+    pivot["_sort_var"] = variance_data
+    goal_pivot["_sort_var"] = variance_data
+    pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
+    goal_pivot = goal_pivot.sort_values("_sort_var").reset_index(drop=True)
+    pivot.insert(0, "Rank", range(1, len(pivot) + 1))
+    goal_pivot.insert(0, "Rank", range(1, len(goal_pivot) + 1))
+    pivot = pivot.drop(columns=["_sort_var"])
+    goal_pivot = goal_pivot.drop(columns=["_sort_var"])
+
     # Rename week columns to end date (Wednesday) labels (e.g. "Wk 3/25")
     week_col_map = {}
     for col in week_cols:
@@ -798,7 +848,7 @@ elif page == "AVS Performance - DMs":
     def color_dm_cells(row):
         styles = [""] * len(row)
         for i, col in enumerate(row.index):
-            if col in ("DM", "Stores"):
+            if col in ("Rank", "DM", "Stores"):
                 continue
             actual = row[col]
             goal = goal_pivot.loc[goal_pivot["DM"] == row["DM"], col].values
