@@ -63,6 +63,21 @@ st.set_page_config(page_title="Ram-Z Accounting Toolbox", layout="wide")
 # ---------------------------------------------------------------------------
 st.markdown("""
 <style>
+/* --- Ram-Z Brand Colors --- */
+:root {
+    --ramz-navy: #2B3A4E;
+    --ramz-gold: #C49A5C;
+    --ramz-gold-light: #F5F0EB;
+}
+
+/* Sidebar background */
+section[data-testid="stSidebar"] {
+    background-color: var(--ramz-navy);
+}
+section[data-testid="stSidebar"] * {
+    color: #FFFFFF !important;
+}
+
 /* Tighten sidebar spacing */
 section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
 section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.15rem; }
@@ -86,7 +101,7 @@ section[data-testid="stSidebar"] button[kind="secondary"] div {
     width: 100%;
 }
 section[data-testid="stSidebar"] button[kind="secondary"]:hover {
-    background: rgba(151, 166, 195, 0.15);
+    background: rgba(196, 154, 92, 0.25);
 }
 
 /* Compact expanders */
@@ -103,13 +118,26 @@ section[data-testid="stSidebar"] details[open] [data-testid="stVerticalBlock"] {
     padding-left: 0.5rem;
 }
 
-/* Sidebar header */
+/* Sidebar header — gold accent */
 section[data-testid="stSidebar"] h2 {
     font-size: 1rem;
     margin-bottom: 0.75rem;
     padding-bottom: 0.25rem;
-    border-bottom: 1px solid rgba(151, 166, 195, 0.2);
+    border-bottom: 1px solid rgba(196, 154, 92, 0.5) !important;
+    color: var(--ramz-gold) !important;
 }
+
+/* Main content — accent colors */
+.stButton > button[kind="primary"] {
+    background-color: var(--ramz-gold);
+    border-color: var(--ramz-gold);
+    color: white;
+}
+.stButton > button[kind="primary"]:hover {
+    background-color: #B08A4E;
+    border-color: #B08A4E;
+}
+h1 { color: var(--ramz-navy) !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -200,6 +228,12 @@ def render_nav_section(header, section_key, use_expander=False):
                 set_page(section_key, p)
                 st.rerun()
 
+
+# --- Sidebar logo ---
+_LOGO_PATH = _FZ_DIR / "ramz_logo.png"
+if _LOGO_PATH.exists():
+    st.sidebar.image(str(_LOGO_PATH), use_container_width=True)
+    st.sidebar.markdown("---")
 
 render_nav_section("Accounting", "accounting")
 render_nav_section("Labor", "labor")
