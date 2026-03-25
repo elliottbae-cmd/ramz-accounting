@@ -146,7 +146,7 @@ ALL_PAGES = {
     "labor": [
         "AVS Weekly Report",
         "AVS Mid-Week Pulse",
-        "Performance Review",
+        "AVS Performance - Store Level",
     ],
     "settings": [
         "Manage Stores",
@@ -539,10 +539,10 @@ elif page == "AVS Mid-Week Pulse":
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: Performance Review
+# PAGE: AVS Performance - Store Level
 # ═══════════════════════════════════════════════════════════════════════════════
-elif page == "Performance Review":
-    st.title("Performance Review")
+elif page == "AVS Performance - Store Level":
+    st.title("AVS Performance - Store Level")
     st.caption("Compare store performance (Goal vs Actual hours) across weeks.")
 
     locked_weeks = get_locked_weeks()
