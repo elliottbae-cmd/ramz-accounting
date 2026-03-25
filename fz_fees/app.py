@@ -337,6 +337,9 @@ if page == "FZ Fee Reconciliation":
             st.session_state["fiscal_yr"] = fiscal_yr
             st.session_state["week_num"] = week_num
             st.session_state["invoices"] = invoices
+            # Auto-clear file uploaders
+            st.session_state["fz_upload_ctr"] += 1
+            st.rerun()
 
         except ValueError as e:
             st.error(f"Error: {e}")
@@ -413,13 +416,6 @@ if page == "FZ Fee Reconciliation":
                                data=st.session_state["invoice_csv"],
                                file_name=inv[1], mime="text/csv", use_container_width=True)
 
-        st.divider()
-        if st.button("Clear & Run New Report", use_container_width=True, key="fz_clear"):
-            for k in ("results", "report_buf", "invoice_csv", "fz_week_end_dt",
-                       "bank_date_str", "fiscal_yr", "week_num", "invoices"):
-                st.session_state.pop(k, None)
-            st.session_state["fz_upload_ctr"] += 1
-            st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -462,20 +458,24 @@ elif page == "AVS Weekly Report":
                 # Build ref_data and band_goals from locked values
                 locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
                 buf = generate_weekly_report(adp_file, sales_file, locked, locked_band_goals, report_dates)
-            st.success("Report generated!")
-            ws = get_week_start(start_date)
-            st.caption(f"Used locked config for week: {format_week_label(ws)}")
-            st.download_button("Download Weekly Report",
-                               data=buf,
-                               file_name=f"AVS_Labor_Report_{start_date.strftime('%m%d%Y')}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
-            st.divider()
-            if st.button("Clear & Run New Report", use_container_width=True, key="weekly_clear"):
-                st.session_state["weekly_upload_ctr"] += 1
-                st.rerun()
+            # Store results in session state so they persist after rerun
+            st.session_state["weekly_report_buf"] = buf
+            st.session_state["weekly_report_fname"] = f"AVS_Labor_Report_{start_date.strftime('%m%d%Y')}.xlsx"
+            st.session_state["weekly_report_week"] = format_week_label(get_week_start(start_date))
+            # Auto-clear file uploaders
+            st.session_state["weekly_upload_ctr"] += 1
+            st.rerun()
         except Exception as e:
             st.error(f"Error: {e}")
+
+    if "weekly_report_buf" in st.session_state:
+        st.success("Report generated!")
+        st.caption(f"Used locked config for week: {st.session_state['weekly_report_week']}")
+        st.download_button("Download Weekly Report",
+                           data=st.session_state["weekly_report_buf"],
+                           file_name=st.session_state["weekly_report_fname"],
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -517,20 +517,25 @@ elif page == "AVS Mid-Week Pulse":
                 locked = ensure_current_week_locked(ref_data, band_goals, start_date)
                 locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
                 buf = generate_midweek_report(adp_file, locked, locked_band_goals, report_dates, through_day)
-            st.success("Report generated!")
-            ws = get_week_start(start_date)
-            st.caption(f"Used locked config for week: {format_week_label(ws)} | Thresholds: {through_day}")
-            st.download_button("Download Mid-Week Report",
-                               data=buf,
-                               file_name=f"AVS_MidWeek_Report_{start_date.strftime('%m%d%Y')}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
-            st.divider()
-            if st.button("Clear & Run New Report", use_container_width=True, key="mw_clear"):
-                st.session_state["mw_upload_ctr"] += 1
-                st.rerun()
+            # Store results in session state so they persist after rerun
+            st.session_state["mw_report_buf"] = buf
+            st.session_state["mw_report_fname"] = f"AVS_MidWeek_Report_{start_date.strftime('%m%d%Y')}.xlsx"
+            st.session_state["mw_report_week"] = format_week_label(get_week_start(start_date))
+            st.session_state["mw_report_day"] = through_day
+            # Auto-clear file uploaders
+            st.session_state["mw_upload_ctr"] += 1
+            st.rerun()
         except Exception as e:
             st.error(f"Error: {e}")
+
+    if "mw_report_buf" in st.session_state:
+        st.success("Report generated!")
+        st.caption(f"Used locked config for week: {st.session_state['mw_report_week']} | Thresholds: {st.session_state['mw_report_day']}")
+        st.download_button("Download Mid-Week Report",
+                           data=st.session_state["mw_report_buf"],
+                           file_name=st.session_state["mw_report_fname"],
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
