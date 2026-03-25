@@ -106,7 +106,7 @@ section[data-testid="stSidebar"] details[open] [data-testid="stVerticalBlock"] {
 /* Sidebar header */
 section[data-testid="stSidebar"] h2 {
     font-size: 1rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.75rem;
     padding-bottom: 0.25rem;
     border-bottom: 1px solid rgba(151, 166, 195, 0.2);
 }
