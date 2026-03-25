@@ -166,6 +166,11 @@ if "active_page" not in st.session_state:
 if "active_section" not in st.session_state:
     st.session_state["active_section"] = "accounting"
 
+# Upload key counters — incrementing these resets file uploaders
+for _ctr in ("fz_upload_ctr", "weekly_upload_ctr", "mw_upload_ctr"):
+    if _ctr not in st.session_state:
+        st.session_state[_ctr] = 0
+
 
 def set_page(section, page_name):
     st.session_state["active_page"] = page_name
@@ -245,12 +250,15 @@ if page == "FZ Fee Reconciliation":
         loc_upload = st.file_uploader("Locations Master (.csv)", type=["csv"], key="loc")
         locations_source = loc_upload
 
+    _fz_ctr = st.session_state["fz_upload_ctr"]
     col_fz, col_bank = st.columns(2)
     with col_fz:
-        fz_file = st.file_uploader("FZ Fee Schedule (.xlsx)", type=["xlsx"], key="fz",
+        fz_file = st.file_uploader("FZ Fee Schedule (.xlsx)", type=["xlsx"],
+                                    key=f"fz_{_fz_ctr}",
                                     help="Weekly fee schedule from the franchisor.")
     with col_bank:
-        bank_file = st.file_uploader("Bank Data (.xlsx) — optional", type=["xlsx"], key="bank",
+        bank_file = st.file_uploader("Bank Data (.xlsx) — optional", type=["xlsx"],
+                                      key=f"bank_{_fz_ctr}",
                                       help="Bank ACH transaction export. Leave blank to run FZ-only.")
 
     detected_bank_date = None
@@ -405,6 +413,14 @@ if page == "FZ Fee Reconciliation":
                                data=st.session_state["invoice_csv"],
                                file_name=inv[1], mime="text/csv", use_container_width=True)
 
+        st.divider()
+        if st.button("Clear & Run New Report", use_container_width=True, key="fz_clear"):
+            for k in ("results", "report_buf", "invoice_csv", "fz_week_end_dt",
+                       "bank_date_str", "fiscal_yr", "week_num", "invoices"):
+                st.session_state.pop(k, None)
+            st.session_state["fz_upload_ctr"] += 1
+            st.rerun()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: AVS Weekly Report
@@ -421,10 +437,11 @@ elif page == "AVS Weekly Report":
 
     report_dates = f"{start_date.month}.{start_date.day}.{start_date.strftime('%y')} - {end_date.month}.{end_date.day}.{end_date.strftime('%y')}"
 
+    _wk_ctr = st.session_state["weekly_upload_ctr"]
     st.divider()
-    adp_file = st.file_uploader("ADP Payroll CSV", type=["csv"], key="weekly_adp",
+    adp_file = st.file_uploader("ADP Payroll CSV", type=["csv"], key=f"weekly_adp_{_wk_ctr}",
                                  help="Upload the ADP payroll export for this period.")
-    sales_file = st.file_uploader("End of Week Net Sales (.xlsx)", type=["xlsx"], key="weekly_sales",
+    sales_file = st.file_uploader("End of Week Net Sales (.xlsx)", type=["xlsx"], key=f"weekly_sales_{_wk_ctr}",
                                    help="Upload the weekly net sales file.")
 
     st.divider()
@@ -453,6 +470,10 @@ elif page == "AVS Weekly Report":
                                file_name=f"AVS_Labor_Report_{start_date.strftime('%m%d%Y')}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                use_container_width=True)
+            st.divider()
+            if st.button("Clear & Run New Report", use_container_width=True, key="weekly_clear"):
+                st.session_state["weekly_upload_ctr"] += 1
+                st.rerun()
         except Exception as e:
             st.error(f"Error: {e}")
 
@@ -478,8 +499,9 @@ elif page == "AVS Mid-Week Pulse":
 
     report_dates = f"{start_date.month}.{start_date.day}.{start_date.strftime('%y')} - {end_date.month}.{end_date.day}.{end_date.strftime('%y')}"
 
+    _mw_ctr = st.session_state["mw_upload_ctr"]
     st.divider()
-    adp_file = st.file_uploader("ADP Payroll CSV", type=["csv"], key="mw_adp",
+    adp_file = st.file_uploader("ADP Payroll CSV", type=["csv"], key=f"mw_adp_{_mw_ctr}",
                                  help="Upload the ADP payroll export.")
 
     st.divider()
@@ -503,6 +525,10 @@ elif page == "AVS Mid-Week Pulse":
                                file_name=f"AVS_MidWeek_Report_{start_date.strftime('%m%d%Y')}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                use_container_width=True)
+            st.divider()
+            if st.button("Clear & Run New Report", use_container_width=True, key="mw_clear"):
+                st.session_state["mw_upload_ctr"] += 1
+                st.rerun()
         except Exception as e:
             st.error(f"Error: {e}")
 
