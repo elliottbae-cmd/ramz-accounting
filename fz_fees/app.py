@@ -613,7 +613,9 @@ elif page == "Performance Review":
     st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} → {format_week_label(filtered_weeks[-1])}")
     st.caption(f"{len(filtered_weeks)} week(s)  ·  {perf_data['store_name'].nunique()} store(s)")
 
-    # --- Pivot: stores as rows, weeks as columns ---
+    # --- Pivot: stores as rows, weeks as columns (show actual hours, 0 if not yet run) ---
+    # TODO: replace "hourly_goal" with actual_hours once AVS actuals are captured
+    # For now, display 0 for every cell since no actuals exist yet
     pivot = perf_data.pivot_table(
         index="store_name",
         columns="week_start",
@@ -624,15 +626,20 @@ elif page == "Performance Review":
     pivot = pivot.rename(columns={"store_name": "Store"})
     pivot = pivot.sort_values("Store").reset_index(drop=True)
 
-    # Rename week columns to short readable labels (e.g. "3/20")
+    # Zero out week values — actuals haven't been captured yet
+    week_cols = [c for c in pivot.columns if c != "Store"]
+    for wc in week_cols:
+        pivot[wc] = 0
+
+    # Rename week columns to end date (Wednesday) labels (e.g. "Wk 3/25")
     week_col_map = {}
-    for col in pivot.columns:
-        if col != "Store":
-            try:
-                d = date.fromisoformat(col)
-                week_col_map[col] = f"Wk {d.month}/{d.day}"
-            except (ValueError, TypeError):
-                pass
+    for col in week_cols:
+        try:
+            d = date.fromisoformat(col)
+            end_d = d + timedelta(days=6)  # Thursday + 6 = Wednesday
+            week_col_map[col] = f"Wk {end_d.month}/{end_d.day}"
+        except (ValueError, TypeError):
+            pass
     pivot = pivot.rename(columns=week_col_map)
 
     st.dataframe(
