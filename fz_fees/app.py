@@ -29,7 +29,7 @@ from reconcile import (
 )
 from avs_engine import (
     load_reference_data, load_band_goals, load_dm_list,
-    generate_weekly_report, generate_midweek_report, generate_tuesday_report,
+    generate_weekly_report, generate_midweek_report,
     REFERENCE_DATA_PATH, BAND_GOALS_PATH, DM_LIST_PATH,
 )
 from weekly_lock import (
@@ -146,7 +146,6 @@ ALL_PAGES = {
     "labor": [
         "AVS Weekly Report",
         "AVS Mid-Week Pulse",
-        "AVS Tuesday Report",
         "Performance Review",
     ],
     "settings": [
@@ -463,19 +462,25 @@ elif page == "AVS Weekly Report":
 # ═══════════════════════════════════════════════════════════════════════════════
 elif page == "AVS Mid-Week Pulse":
     st.title("AVS Mid-Week Labor Pulse")
-    st.caption("Thu-Sun hours vs. weekly goal. Red >65%, Grey 60-65%, Green <60%.")
+    st.caption("Cumulative hours vs. weekly goal with day-specific color thresholds.")
 
-    col1, col2 = st.columns(2)
+    DAY_OPTIONS = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday"]
+
+    col1, col2, col3 = st.columns(3)
     with col1:
         start_date = st.date_input("Report Start Date", key="mw_start")
     with col2:
         end_date = st.date_input("Report End Date", key="mw_end")
+    with col3:
+        through_day = st.selectbox("Data Through (Day)", DAY_OPTIONS, key="mw_day",
+                                    help="Select the last day of data in this upload. "
+                                         "Color thresholds adjust based on the day.")
 
     report_dates = f"{start_date.month}.{start_date.day}.{start_date.strftime('%y')} - {end_date.month}.{end_date.day}.{end_date.strftime('%y')}"
 
     st.divider()
     adp_file = st.file_uploader("ADP Payroll CSV", type=["csv"], key="mw_adp",
-                                 help="Upload the ADP payroll export for Thu-Sun.")
+                                 help="Upload the ADP payroll export.")
 
     st.divider()
     if st.button("Generate Report", type="primary", use_container_width=True, key="mw_run"):
@@ -489,57 +494,13 @@ elif page == "AVS Mid-Week Pulse":
                 band_goals = load_band_goals()
                 locked = ensure_current_week_locked(ref_data, band_goals, start_date)
                 locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
-                buf = generate_midweek_report(adp_file, locked, locked_band_goals, report_dates)
+                buf = generate_midweek_report(adp_file, locked, locked_band_goals, report_dates, through_day)
             st.success("Report generated!")
             ws = get_week_start(start_date)
-            st.caption(f"Used locked config for week: {format_week_label(ws)}")
+            st.caption(f"Used locked config for week: {format_week_label(ws)} | Thresholds: {through_day}")
             st.download_button("Download Mid-Week Report",
                                data=buf,
                                file_name=f"AVS_MidWeek_Report_{start_date.strftime('%m%d%Y')}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
-        except Exception as e:
-            st.error(f"Error: {e}")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: AVS Tuesday Report
-# ═══════════════════════════════════════════════════════════════════════════════
-elif page == "AVS Tuesday Report":
-    st.title("AVS Tuesday Labor Report")
-    st.caption("Full week through Tuesday. Red >90%, Grey 87-90%, Green <85%.")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("Report Start Date", key="tue_start")
-    with col2:
-        end_date = st.date_input("Report End Date", key="tue_end")
-
-    report_dates = f"{start_date.month}.{start_date.day}.{start_date.strftime('%y')} - {end_date.month}.{end_date.day}.{end_date.strftime('%y')}"
-
-    st.divider()
-    adp_file = st.file_uploader("ADP Payroll CSV", type=["csv"], key="tue_adp",
-                                 help="Upload the ADP payroll export through Tuesday.")
-
-    st.divider()
-    if st.button("Generate Report", type="primary", use_container_width=True, key="tue_run"):
-        if adp_file is None:
-            st.error("Please upload the ADP Payroll CSV.")
-            st.stop()
-
-        try:
-            with st.spinner("Generating Tuesday report..."):
-                ref_data = load_reference_data()
-                band_goals = load_band_goals()
-                locked = ensure_current_week_locked(ref_data, band_goals, start_date)
-                locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
-                buf = generate_tuesday_report(adp_file, locked, locked_band_goals, report_dates)
-            st.success("Report generated!")
-            ws = get_week_start(start_date)
-            st.caption(f"Used locked config for week: {format_week_label(ws)}")
-            st.download_button("Download Tuesday Report",
-                               data=buf,
-                               file_name=f"AVS_Tuesday_Report_{start_date.strftime('%m%d%Y')}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                use_container_width=True)
         except Exception as e:
