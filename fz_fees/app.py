@@ -626,27 +626,53 @@ elif page == "Performance Review":
     pivot = pivot.rename(columns={"store_name": "Store"})
     pivot = pivot.sort_values("Store").reset_index(drop=True)
 
-    # Zero out week values — actuals haven't been captured yet
+    # Build goal lookup and zero out actuals (not yet captured)
     week_cols = [c for c in pivot.columns if c != "Store"]
+    goal_pivot = pivot.copy()  # preserve goals for color coding
     for wc in week_cols:
         pivot[wc] = 0
 
     # Rename week columns to end date (Wednesday) labels (e.g. "Wk 3/25")
     week_col_map = {}
+    renamed_week_cols = []
     for col in week_cols:
         try:
             d = date.fromisoformat(col)
             end_d = d + timedelta(days=6)  # Thursday + 6 = Wednesday
-            week_col_map[col] = f"Wk {end_d.month}/{end_d.day}"
+            label = f"Wk {end_d.month}/{end_d.day}"
+            week_col_map[col] = label
+            renamed_week_cols.append(label)
         except (ValueError, TypeError):
             pass
     pivot = pivot.rename(columns=week_col_map)
+    goal_pivot = goal_pivot.rename(columns=week_col_map)
 
+    # --- Color coding: compare actuals vs goals ---
+    # No data (0) = no color | Within 30 hrs of goal = light green | Off by 30+ = light red
+    def color_cells(row):
+        styles = [""] * len(row)
+        for i, col in enumerate(row.index):
+            if col == "Store":
+                continue
+            actual = row[col]
+            goal = goal_pivot.loc[goal_pivot["Store"] == row["Store"], col].values
+            goal_val = goal[0] if len(goal) > 0 else 0
+            if actual == 0:
+                styles[i] = ""  # no color for missing data
+            elif abs(actual - goal_val) > 30:
+                styles[i] = "background-color: #ffcccc"  # light red
+            else:
+                styles[i] = "background-color: #ccffcc"  # light green
+        return styles
+
+    styled = pivot.style.apply(color_cells, axis=1)
+
+    # Display all rows — no internal scroll, user scrolls the browser
     st.dataframe(
-        pivot,
+        styled,
         use_container_width=False,
-        height=min(500, 40 + len(pivot) * 35),
         hide_index=True,
+        height=(len(pivot) + 1) * 35 + 3,
     )
 
     st.info(
