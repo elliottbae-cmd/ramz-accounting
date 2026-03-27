@@ -41,7 +41,7 @@ from db import (
     load_stores, save_store, delete_store,
     save_reference_data_row, save_reference_data_bulk, delete_reference_data,
     save_band_goals, add_dm, remove_dm as db_remove_dm,
-    load_all_locks,
+    load_all_locks, delete_week_lock, log_change,
 )
 
 
@@ -1362,6 +1362,26 @@ elif page == "Weekly Config":
             except Exception as e:
                 st.error(f"Error: {e}")
 
+    # Delete week lock
+    st.divider()
+    st.subheader("Delete Week Lock")
+    st.caption("Remove the entire lock for this week. This allows the report to be re-run with fresh data.")
+    st.warning(f"This will delete the locked config for **{week_labels[selected_week]}** and all associated data.")
+    if st.button("Delete This Week's Lock", type="primary"):
+        delete_week_lock(selected_week)
+        log_change(
+            user_email=current_user or "admin",
+            week_start=selected_week,
+            location_id="ALL",
+            field_changed="week_lock",
+            old_value=str(selected_week),
+            new_value="deleted",
+            action="admin-delete",
+        )
+        st.success(f"Lock deleted for {week_labels[selected_week]}. You can now re-run the report.")
+        st.cache_data.clear()
+        st.rerun()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: Change Log (Admin)
@@ -1458,6 +1478,7 @@ elif page == "Admin Users":
             else:
                 add_admin(email_clean)
                 st.success(f"Added admin: {email_clean}")
+                st.cache_data.clear()
                 st.rerun()
 
     with col2:
@@ -1473,6 +1494,7 @@ elif page == "Admin Users":
                 else:
                     remove_admin(remove_email)
                     st.success(f"Removed admin: {remove_email}")
+                    st.cache_data.clear()
                     st.rerun()
         else:
             st.info("Cannot remove the last admin.")

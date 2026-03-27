@@ -189,6 +189,13 @@ def create_lock(week_start, ref_data, band_goals, source="manual"):
     return pd.DataFrame(rows)
 
 
+def delete_week_lock(week_start):
+    """Delete all lock entries for a given week."""
+    sb = get_supabase()
+    week_str = str(week_start)
+    sb.table("weekly_locks").delete().eq("week_start", week_str).execute()
+
+
 def override_locked_value(week_start, location_id, field, new_value):
     """Override a single field in a locked week's config. Returns old value."""
     sb = get_supabase()
