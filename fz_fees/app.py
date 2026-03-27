@@ -734,6 +734,10 @@ elif page == "AVS Performance - Store Level":
     pivot = pivot.rename(columns={"store_name": "Store"})
     week_cols = [c for c in pivot.columns if c != "Store"]
 
+    # Round to whole numbers
+    for wc in week_cols:
+        pivot[wc] = pivot[wc].round(0).astype(int)
+
     # --- Ranking: avg variance, most over goal ranked last ---
     pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).mean(axis=1).fillna(0)
     pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
@@ -903,6 +907,10 @@ elif page == "AVS Performance - DMs":
     pivot = pivot[cols]
 
     week_cols = [c for c in pivot.columns if c not in ("DM", "Stores")]
+
+    # Round to whole numbers
+    for wc in week_cols:
+        pivot[wc] = pivot[wc].round(0).astype(int)
 
     # --- Ranking: avg variance, most over goal ranked last ---
     pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).mean(axis=1).fillna(0)
