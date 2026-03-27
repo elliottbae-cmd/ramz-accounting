@@ -15,7 +15,7 @@ from datetime import datetime, date, timedelta
 
 import pandas as pd
 
-from db import (
+from supabase_db import (
     load_all_locks, load_locked_config, lock_exists,
     create_lock, override_locked_value as _db_override,
     get_locked_weeks, log_change, load_change_log,

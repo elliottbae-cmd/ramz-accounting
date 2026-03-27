@@ -37,7 +37,7 @@ from weekly_lock import (
     ensure_current_week_locked, override_locked_value, get_locked_weeks,
     load_change_log, is_admin, load_admin_users, add_admin, remove_admin,
 )
-from db import (
+from supabase_db import (
     load_stores, save_store, delete_store,
     save_reference_data_row, save_reference_data_bulk, delete_reference_data,
     save_band_goals, add_dm, remove_dm as db_remove_dm,

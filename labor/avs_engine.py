@@ -19,7 +19,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from db import (
+from supabase_db import (
     load_reference_data as _db_load_reference_data,
     load_band_goals as _db_load_band_goals,
     load_dm_list as _db_load_dm_list,
