@@ -203,7 +203,13 @@ def get_current_user_email():
     return ""
 
 current_user = get_current_user_email()
-user_is_admin = is_admin(current_user) if current_user else True  # Default admin if no auth
+# If no auth is configured, check if running locally (allow admin) vs cloud (deny admin)
+if current_user:
+    user_is_admin = is_admin(current_user)
+else:
+    # Allow admin access only if no auth is set up (dev mode) — check for known admin email fallback
+    import os
+    user_is_admin = not os.environ.get("STREAMLIT_SHARING_MODE", False)
 
 # ---------------------------------------------------------------------------
 # Navigation — use session state to avoid sticky radio buttons
@@ -542,6 +548,7 @@ elif page == "AVS Weekly Report":
                 # Save actual hours to Supabase for performance pages
                 week_start = get_week_start(start_date)
                 save_weekly_actuals(week_start, actuals_df)
+            st.cache_data.clear()
             # Store results in session state so they persist after rerun
             st.session_state["weekly_report_buf"] = buf
             st.session_state["weekly_report_fname"] = f"AVS_Labor_Report_{start_date.strftime('%m%d%Y')}.xlsx"
@@ -1147,7 +1154,9 @@ elif page == "Store Revenue Bands":
         st.markdown("**Store Name**")
     for i, (w, label, status) in enumerate(zip(weeks, week_labels, week_statuses)):
         with header_cols[i + 2]:
-            if status == "locked":
+            if w == current_week:
+                st.markdown(f"**{label}**<br><span class='week-locked'>Current</span>", unsafe_allow_html=True)
+            elif status == "locked":
                 st.markdown(f"**{label}**<br><span class='week-locked'>Locked</span>", unsafe_allow_html=True)
             elif status == "draft":
                 st.markdown(f"**{label}**<br><span class='week-draft'>Draft</span>", unsafe_allow_html=True)
@@ -1178,7 +1187,7 @@ elif page == "Store Revenue Bands":
                 band_idx = BAND_OPTIONS.index(existing_band) if existing_band in BAND_OPTIONS else 0
 
                 with cols[i + 2]:
-                    if status == "locked":
+                    if status == "locked" or w == current_week:
                         st.text(existing_band)
                         grid_data[w_str][store_id] = existing_band
                     else:
@@ -1200,10 +1209,12 @@ elif page == "Store Revenue Bands":
     # Handle save
     if save_drafts_btn:
         for w, status in zip(weeks, week_statuses):
-            if status != "locked":
-                w_str = str(w)
-                save_draft_bands(w, grid_data[w_str], ref_df, band_goals)
-        st.success("Drafts saved!")
+            # Skip current week and already-locked weeks
+            if w == current_week or status == "locked":
+                continue
+            w_str = str(w)
+            save_draft_bands(w, grid_data[w_str], ref_df, band_goals)
+        st.success("Drafts saved for future weeks!")
         st.cache_data.clear()
         st.rerun()
 

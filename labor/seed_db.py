@@ -129,8 +129,9 @@ def main():
         df = pd.read_csv(WEEKLY_LOCK_CSV, sep="|", dtype=str)
         if not df.empty:
             df["hourly_goal"] = pd.to_numeric(df["hourly_goal"], errors="coerce").fillna(0)
+            df["status"] = "locked"  # All seeded locks are locked by default
             records = df[["week_start", "location_id", "store_name", "dm",
-                          "revenue_band", "hourly_goal", "source"]].to_dict("records")
+                          "revenue_band", "hourly_goal", "source", "status"]].to_dict("records")
             print(f"  weekly_locks: inserting {len(records)} rows...")
             # Insert in batches of 100 to avoid payload limits
             for i in range(0, len(records), 100):
