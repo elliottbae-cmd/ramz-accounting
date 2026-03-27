@@ -42,6 +42,7 @@ from supabase_db import (
     save_reference_data_row, save_reference_data_bulk, delete_reference_data,
     save_band_goals, add_dm, remove_dm as db_remove_dm,
     load_all_locks, delete_week_lock, log_change,
+    save_weekly_actuals, load_weekly_actuals, delete_weekly_actuals,
 )
 
 
@@ -71,6 +72,10 @@ def _cached_dm_list():
 @st.cache_data(ttl=60)
 def _cached_all_locks():
     return load_all_locks()
+
+@st.cache_data(ttl=60)
+def _cached_weekly_actuals():
+    return load_weekly_actuals()
 
 # ---------------------------------------------------------------------------
 # Page setup
@@ -531,7 +536,10 @@ elif page == "AVS Weekly Report":
                 locked = ensure_current_week_locked(ref_data, band_goals, start_date)
                 # Build ref_data and band_goals from locked values
                 locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
-                buf = generate_weekly_report(adp_file, sales_file, locked, locked_band_goals, report_dates)
+                buf, actuals_df = generate_weekly_report(adp_file, sales_file, locked, locked_band_goals, report_dates)
+                # Save actual hours to Supabase for performance pages
+                week_start = get_week_start(start_date)
+                save_weekly_actuals(week_start, actuals_df)
             # Store results in session state so they persist after rerun
             st.session_state["weekly_report_buf"] = buf
             st.session_state["weekly_report_fname"] = f"AVS_Labor_Report_{start_date.strftime('%m%d%Y')}.xlsx"
@@ -686,80 +694,79 @@ elif page == "AVS Performance - Store Level":
     st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} → {format_week_label(filtered_weeks[-1])}")
     st.caption(f"{len(filtered_weeks)} week(s)  ·  {perf_data['store_name'].nunique()} store(s)")
 
-    # --- Pivot: stores as rows, weeks as columns (show actual hours, 0 if not yet run) ---
-    # TODO: replace "hourly_goal" with actual_hours once AVS actuals are captured
-    # For now, display 0 for every cell since no actuals exist yet
-    pivot = perf_data.pivot_table(
-        index="store_name",
-        columns="week_start",
-        values="hourly_goal",
-        aggfunc="first",
-    ).reset_index()
+    # --- Load actuals and merge with lock data ---
+    actuals = _cached_weekly_actuals()
+    week_strs_set = set(week_strs)
+
+    # Merge lock data (store_name, dm) with actuals (actual_hours, variance)
+    if not actuals.empty:
+        actuals_filtered = actuals[actuals["week_start"].isin(week_strs_set)].copy()
+    else:
+        actuals_filtered = pd.DataFrame(columns=["week_start", "location_id", "actual_hours", "variance"])
+
+    # Build variance pivot: stores as rows, weeks as columns
+    # Use lock data for store list, actuals for values
+    store_info = perf_data[["location_id", "store_name"]].drop_duplicates()
+
+    # Merge actuals with store names
+    if not actuals_filtered.empty:
+        display_data = actuals_filtered.merge(store_info, on="location_id", how="inner")
+    else:
+        # No actuals yet — show all stores with 0
+        display_data = perf_data[["week_start", "location_id", "store_name"]].copy()
+        display_data["variance"] = 0
+
+    # Pivot variance by store x week
+    if not display_data.empty and "variance" in display_data.columns:
+        pivot = display_data.pivot_table(
+            index="store_name",
+            columns="week_start",
+            values="variance",
+            aggfunc="first",
+        ).fillna(0).reset_index()
+    else:
+        pivot = pd.DataFrame({"store_name": store_info["store_name"].unique()})
+        for ws in week_strs:
+            pivot[ws] = 0
+        pivot = pivot.reset_index(drop=True)
+
     pivot.columns.name = None
     pivot = pivot.rename(columns={"store_name": "Store"})
-    pivot = pivot.sort_values("Store").reset_index(drop=True)
-
-    # Build goal lookup and zero out actuals (not yet captured)
     week_cols = [c for c in pivot.columns if c != "Store"]
-    goal_pivot = pivot.copy()  # preserve goals for color coding
-    for wc in week_cols:
-        pivot[wc] = 0
 
-    # --- Ranking: avg variance across weeks, most over goal ranked last ---
-    # variance = actual - goal (positive = over goal, negative = under)
-    # When actuals are 0 (no data), treat variance as 0
-    variance_data = []
-    for _, row in pivot.iterrows():
-        total_var = 0
-        count = 0
-        for wc in week_cols:
-            actual = row[wc]
-            goal_vals = goal_pivot.loc[goal_pivot["Store"] == row["Store"], wc].values
-            goal_val = goal_vals[0] if len(goal_vals) > 0 else 0
-            if actual != 0 or goal_val != 0:
-                total_var += actual - goal_val
-                count += 1
-        avg_var = total_var / count if count > 0 else 0
-        variance_data.append(avg_var)
-    pivot["_sort_var"] = variance_data
-    goal_pivot["_sort_var"] = variance_data
-    # Sort: most under goal first (best), most over goal last (worst)
+    # --- Ranking: avg variance, most over goal ranked last ---
+    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).mean(axis=1).fillna(0)
     pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
-    goal_pivot = goal_pivot.sort_values("_sort_var").reset_index(drop=True)
-    # Add rank column
     pivot.insert(0, "Rank", range(1, len(pivot) + 1))
-    goal_pivot.insert(0, "Rank", range(1, len(goal_pivot) + 1))
     pivot = pivot.drop(columns=["_sort_var"])
-    goal_pivot = goal_pivot.drop(columns=["_sort_var"])
 
-    # Rename week columns to end date (Wednesday) labels (e.g. "Wk 3/25")
+    # Rename week columns to end date (Wednesday) labels
     week_col_map = {}
-    renamed_week_cols = []
     for col in week_cols:
         try:
             d = date.fromisoformat(col)
-            end_d = d + timedelta(days=6)  # Thursday + 6 = Wednesday
-            label = f"Wk {end_d.month}/{end_d.day}"
-            week_col_map[col] = label
-            renamed_week_cols.append(label)
+            end_d = d + timedelta(days=6)
+            week_col_map[col] = f"Wk {end_d.month}/{end_d.day}"
         except (ValueError, TypeError):
             pass
     pivot = pivot.rename(columns=week_col_map)
-    goal_pivot = goal_pivot.rename(columns=week_col_map)
+    renamed_week_cols = [week_col_map.get(c, c) for c in week_cols]
 
-    # --- Color coding: compare actuals vs goals ---
-    # No data (0) = no color | Within 30 hrs of goal = light green | Off by 30+ = light red
+    # --- Color coding: variance-based ---
+    # 0 with no actuals = no color | Within ±30 hrs = light green | Off by 30+ = light red
+    has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
+
     def color_cells(row):
         styles = [""] * len(row)
         for i, col in enumerate(row.index):
             if col in ("Rank", "Store"):
                 continue
-            actual = row[col]
-            goal = goal_pivot.loc[goal_pivot["Store"] == row["Store"], col].values
-            goal_val = goal[0] if len(goal) > 0 else 0
-            if actual == 0:
-                styles[i] = ""  # no color for missing data
-            elif abs(actual - goal_val) > 30:
+            variance = row[col]
+            # Find original week_start for this column
+            orig_week = next((k for k, v in week_col_map.items() if v == col), None)
+            if orig_week not in has_actuals_weeks:
+                styles[i] = ""  # no actuals for this week
+            elif abs(variance) > 30:
                 styles[i] = "background-color: #ffcccc"  # light red
             else:
                 styles[i] = "background-color: #ccffcc"  # light green
@@ -846,63 +853,64 @@ elif page == "AVS Performance - DMs":
     st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} → {format_week_label(filtered_weeks[-1])}")
     st.caption(f"{len(filtered_weeks)} week(s)  ·  {perf_data['dm'].nunique()} DM(s)  ·  {perf_data['store_name'].nunique()} store(s)")
 
-    # --- Summarize by DM: total goal across all their stores per week ---
-    dm_summary = perf_data.groupby(["dm", "week_start"]).agg(
-        total_goal=("hourly_goal", "sum"),
-        store_count=("store_name", "nunique"),
-    ).reset_index()
+    # --- Load actuals and summarize by DM ---
+    actuals = _cached_weekly_actuals()
+    week_strs_set = set(week_strs)
 
-    # Pivot: DMs as rows, weeks as columns (showing total goal sum)
-    pivot = dm_summary.pivot_table(
-        index="dm",
-        columns="week_start",
-        values="total_goal",
-        aggfunc="first",
-    ).reset_index()
-    pivot.columns.name = None
-    pivot = pivot.rename(columns={"dm": "DM"})
-    pivot = pivot.sort_values("DM").reset_index(drop=True)
+    if not actuals.empty:
+        actuals_filtered = actuals[actuals["week_start"].isin(week_strs_set)].copy()
+    else:
+        actuals_filtered = pd.DataFrame(columns=["week_start", "location_id", "variance"])
 
-    # Add store count column
+    # Get DM mapping from lock data
+    store_dm = perf_data[["location_id", "dm"]].drop_duplicates()
+
+    # Merge actuals with DM info and sum variance by DM per week
+    if not actuals_filtered.empty:
+        dm_actuals = actuals_filtered.merge(store_dm, on="location_id", how="inner")
+        dm_summary = dm_actuals.groupby(["dm", "week_start"]).agg(
+            total_variance=("variance", "sum"),
+        ).reset_index()
+    else:
+        dm_summary = pd.DataFrame(columns=["dm", "week_start", "total_variance"])
+
+    # Add store count per DM
     dm_store_counts = perf_data.groupby("dm")["store_name"].nunique().reset_index()
     dm_store_counts.columns = ["DM", "Stores"]
+
+    # Pivot: DMs as rows, weeks as columns
+    if not dm_summary.empty:
+        pivot = dm_summary.pivot_table(
+            index="dm",
+            columns="week_start",
+            values="total_variance",
+            aggfunc="first",
+        ).fillna(0).reset_index()
+    else:
+        dms = sorted(perf_data["dm"].dropna().unique())
+        pivot = pd.DataFrame({"dm": dms})
+        for ws in week_strs:
+            pivot[ws] = 0
+
+    pivot.columns.name = None
+    pivot = pivot.rename(columns={"dm": "DM"})
     pivot = pivot.merge(dm_store_counts, on="DM", how="left")
+
     # Move Stores column to second position
     cols = pivot.columns.tolist()
     cols.remove("Stores")
     cols.insert(1, "Stores")
     pivot = pivot[cols]
 
-    # Build goal lookup and zero out actuals (not yet captured)
     week_cols = [c for c in pivot.columns if c not in ("DM", "Stores")]
-    goal_pivot = pivot.copy()  # preserve goals for color coding
-    for wc in week_cols:
-        pivot[wc] = 0
 
-    # --- Ranking: avg variance across weeks, most over goal ranked last ---
-    variance_data = []
-    for _, row in pivot.iterrows():
-        total_var = 0
-        count = 0
-        for wc in week_cols:
-            actual = row[wc]
-            goal_vals = goal_pivot.loc[goal_pivot["DM"] == row["DM"], wc].values
-            goal_val = goal_vals[0] if len(goal_vals) > 0 else 0
-            if actual != 0 or goal_val != 0:
-                total_var += actual - goal_val
-                count += 1
-        avg_var = total_var / count if count > 0 else 0
-        variance_data.append(avg_var)
-    pivot["_sort_var"] = variance_data
-    goal_pivot["_sort_var"] = variance_data
+    # --- Ranking: avg variance, most over goal ranked last ---
+    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).mean(axis=1).fillna(0)
     pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
-    goal_pivot = goal_pivot.sort_values("_sort_var").reset_index(drop=True)
     pivot.insert(0, "Rank", range(1, len(pivot) + 1))
-    goal_pivot.insert(0, "Rank", range(1, len(goal_pivot) + 1))
     pivot = pivot.drop(columns=["_sort_var"])
-    goal_pivot = goal_pivot.drop(columns=["_sort_var"])
 
-    # Rename week columns to end date (Wednesday) labels (e.g. "Wk 3/25")
+    # Rename week columns
     week_col_map = {}
     for col in week_cols:
         try:
@@ -912,39 +920,32 @@ elif page == "AVS Performance - DMs":
         except (ValueError, TypeError):
             pass
     pivot = pivot.rename(columns=week_col_map)
-    goal_pivot = goal_pivot.rename(columns=week_col_map)
 
-    # --- Color coding: compare actuals vs goals (summed across DM's stores) ---
-    # No data (0) = no color | Within 30 hrs of goal = light green | Off by 30+ = light red
+    # --- Color coding ---
+    has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
+
     def color_dm_cells(row):
         styles = [""] * len(row)
         for i, col in enumerate(row.index):
             if col in ("Rank", "DM", "Stores"):
                 continue
-            actual = row[col]
-            goal = goal_pivot.loc[goal_pivot["DM"] == row["DM"], col].values
-            goal_val = goal[0] if len(goal) > 0 else 0
-            if actual == 0:
-                styles[i] = ""  # no color for missing data
-            elif abs(actual - goal_val) > 30:
-                styles[i] = "background-color: #ffcccc"  # light red
+            variance = row[col]
+            orig_week = next((k for k, v in week_col_map.items() if v == col), None)
+            if orig_week not in has_actuals_weeks:
+                styles[i] = ""
+            elif abs(variance) > 30:
+                styles[i] = "background-color: #ffcccc"
             else:
-                styles[i] = "background-color: #ccffcc"  # light green
+                styles[i] = "background-color: #ccffcc"
         return styles
 
     styled = pivot.style.apply(color_dm_cells, axis=1)
 
-    # Display all rows — no internal scroll
     st.dataframe(
         styled,
         use_container_width=False,
         hide_index=True,
         height=(len(pivot) + 1) * 35 + 3,
-    )
-
-    st.info(
-        "This page summarizes total hours across all stores for each DM. "
-        "Once AVS actuals are captured, variance (over/under goal) will display here."
     )
 
 
@@ -955,42 +956,40 @@ elif page == "GM Hot Streak":
     st.title("🔥 GM Hot Streak")
     st.caption("Stores that have hit their goal 2 or more consecutive weeks. A store hits its goal when actual hours are within 30 hours of the target.")
 
-    locked_weeks = get_locked_weeks()
-    if not locked_weeks:
-        st.info("No weekly data available yet. Run AVS reports to build history.")
+    actuals = _cached_weekly_actuals()
+    if actuals.empty:
+        st.info("No actuals data yet. Run AVS Weekly Reports to build history.")
         st.stop()
 
     all_locks = _cached_all_locks()
-    all_locks["hourly_goal"] = pd.to_numeric(all_locks["hourly_goal"], errors="coerce").fillna(0)
 
-    # Get all weeks sorted chronologically
-    sorted_weeks = sorted(all_locks["week_start"].unique().tolist())
-    stores = all_locks["store_name"].unique().tolist()
+    # Get store info (name, DM) from locks
+    store_info = all_locks[["location_id", "store_name", "dm"]].drop_duplicates()
+    store_info = store_info.drop_duplicates(subset="location_id", keep="last")
 
-    # Calculate current streak for each store (consecutive weeks ending at most recent)
+    # Get all weeks with actuals, sorted chronologically
+    sorted_weeks = sorted(actuals["week_start"].unique().tolist())
+    stores = actuals["location_id"].unique().tolist()
+
+    # Calculate current streak for each store
     streak_data = []
-    for store in stores:
-        store_data = all_locks[all_locks["store_name"] == store].copy()
+    for store_id in stores:
+        store_actuals = actuals[actuals["location_id"] == store_id].copy()
         streak = 0
-        # Walk backwards from most recent week
         for week_str in reversed(sorted_weeks):
-            week_row = store_data[store_data["week_start"] == week_str]
+            week_row = store_actuals[store_actuals["week_start"] == week_str]
             if week_row.empty:
-                break  # no data for this week, streak ends
-            goal_val = week_row["hourly_goal"].values[0]
-            # TODO: replace with actual_hours once captured
-            # For now, actual = 0 (no actuals yet), so variance = 0 - goal
-            actual = 0
-            variance = abs(actual - goal_val)
+                break
+            variance = abs(week_row["variance"].values[0])
             if variance <= 30:
                 streak += 1
             else:
-                break  # missed goal, streak ends
+                break
         if streak >= 2:
-            # Get DM for context
-            dm = store_data["dm"].dropna().values
-            dm_name = dm[0] if len(dm) > 0 else ""
-            streak_data.append({"Store": store, "DM": dm_name, "Streak (Weeks)": streak})
+            info = store_info[store_info["location_id"] == store_id]
+            store_name = info["store_name"].values[0] if len(info) > 0 else store_id
+            dm_name = info["dm"].values[0] if len(info) > 0 else ""
+            streak_data.append({"Store": store_name, "DM": dm_name, "Streak (Weeks)": streak})
 
     if not streak_data:
         st.info("No stores are currently on a streak (2+ consecutive weeks hitting their goal).")
@@ -1369,6 +1368,7 @@ elif page == "Weekly Config":
     st.warning(f"This will delete the locked config for **{week_labels[selected_week]}** and all associated data.")
     if st.button("Delete This Week's Lock", type="primary"):
         delete_week_lock(selected_week)
+        delete_weekly_actuals(selected_week)
         log_change(
             user_email=current_user or "admin",
             week_start=selected_week,

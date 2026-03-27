@@ -235,12 +235,30 @@ def _build_merged_df(ref_data, band_goals, pagg, sales=None):
 def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_dates):
     """
     Generate the full weekly AVS Labor Report (3 tabs).
-    Returns BytesIO with the Excel workbook.
+    Returns (BytesIO, DataFrame) — the Excel workbook and per-store actuals.
     """
     raw_payroll = preprocess_adp_csv(adp_file)
     pagg = _aggregate_payroll(raw_payroll, include_wages=True)
     sales = load_net_sales(sales_file)
     df = _build_merged_df(ref_data, band_goals, pagg, sales=sales)
+
+    # Build actuals DataFrame for storage (before Excel generation)
+    actuals_df = df[["Store #", "actual_hours", "Hourly Goal", "Variance"]].copy()
+    actuals_df = actuals_df.rename(columns={
+        "Store #": "location_id",
+        "Hourly Goal": "hourly_goal",
+        "Variance": "variance",
+    })
+    if "Last Week Net Sales" in df.columns:
+        actuals_df["net_sales"] = df["Last Week Net Sales"].fillna(0)
+    else:
+        actuals_df["net_sales"] = 0
+    if "loaded_payroll" in df.columns and "Last Week Net Sales" in df.columns:
+        actuals_df["labor_pct"] = (
+            df["loaded_payroll"].fillna(0) / df["Last Week Net Sales"].replace(0, float("nan"))
+        ).fillna(0)
+    else:
+        actuals_df["labor_pct"] = 0
 
     wb = Workbook()
 
@@ -503,7 +521,7 @@ def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_da
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    return buf
+    return buf, actuals_df
 
 
 # ---------------------------------------------------------------------------

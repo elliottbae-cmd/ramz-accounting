@@ -298,3 +298,54 @@ def remove_admin(email):
     sb = get_supabase()
     clean = email.strip().lower()
     sb.table("admin_users").delete().eq("email", clean).execute()
+
+
+# ---------------------------------------------------------------------------
+# Weekly actuals (actual hours from AVS reports)
+# ---------------------------------------------------------------------------
+def save_weekly_actuals(week_start, df):
+    """Save per-store actual hours for a week. df must have location_id, actual_hours, etc."""
+    sb = get_supabase()
+    week_str = str(week_start)
+
+    # Delete existing entries for this week (allows re-runs)
+    sb.table("weekly_actuals").delete().eq("week_start", week_str).execute()
+
+    rows = []
+    for _, row in df.iterrows():
+        rows.append({
+            "week_start": week_str,
+            "location_id": row["location_id"],
+            "actual_hours": float(row.get("actual_hours", 0) or 0),
+            "hourly_goal": float(row.get("hourly_goal", 0) or 0),
+            "variance": float(row.get("variance", 0) or 0),
+            "net_sales": float(row.get("net_sales", 0) or 0),
+            "labor_pct": float(row.get("labor_pct", 0) or 0),
+        })
+
+    if rows:
+        sb.table("weekly_actuals").insert(rows).execute()
+
+
+def load_weekly_actuals():
+    """Load all weekly actuals. Returns a DataFrame."""
+    sb = get_supabase()
+    resp = sb.table("weekly_actuals").select(
+        "week_start, location_id, actual_hours, hourly_goal, variance, net_sales, labor_pct"
+    ).order("week_start").execute()
+    if resp.data:
+        df = pd.DataFrame(resp.data)
+        for col in ["actual_hours", "hourly_goal", "variance", "net_sales", "labor_pct"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        df["week_start"] = df["week_start"].astype(str)
+        return df
+    return pd.DataFrame(columns=[
+        "week_start", "location_id", "actual_hours", "hourly_goal",
+        "variance", "net_sales", "labor_pct",
+    ])
+
+
+def delete_weekly_actuals(week_start):
+    """Delete all actuals for a given week."""
+    sb = get_supabase()
+    sb.table("weekly_actuals").delete().eq("week_start", str(week_start)).execute()
