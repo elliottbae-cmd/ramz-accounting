@@ -43,6 +43,8 @@ from supabase_db import (
     save_band_goals, add_dm, remove_dm as db_remove_dm,
     load_all_locks, delete_week_lock, log_change,
     save_weekly_actuals, load_weekly_actuals, delete_weekly_actuals,
+    draft_exists, load_draft_config, save_draft_bands, lock_drafts,
+    get_week_status,
 )
 
 
@@ -1103,9 +1105,7 @@ elif page == "Manage Stores":
 # ═══════════════════════════════════════════════════════════════════════════════
 elif page == "Store Revenue Bands":
     st.title("Store Revenue Bands")
-    st.caption("Assign a revenue band to each store. Changes apply to the next unlocked week.")
-
-    show_week_deadline_banner()
+    st.caption("Assign revenue bands per store for current and future weeks. Lock weeks to freeze their config.")
 
     ref_df = _cached_reference_data()
     if ref_df.empty:
@@ -1113,45 +1113,125 @@ elif page == "Store Revenue Bands":
         st.stop()
 
     ref_df = ref_df.sort_values("location_id").reset_index(drop=True)
-
-    # Load band goals for the info display
     band_goals = _cached_band_goals()
 
-    st.info("Each revenue band maps to an hourly goal. You can edit the goals on the **Hourly Goals** page.")
+    # Build 5-week range: current + 4 future
+    current_week = get_week_start()
+    weeks = [current_week + timedelta(days=7 * i) for i in range(5)]
+    week_labels = [format_week_label(w) for w in weeks]
+    week_statuses = [get_week_status(w) for w in weeks]
 
-    # Build the form with dropdowns for each store
-    st.subheader(f"Assign Bands ({len(ref_df)} stores)")
+    # Load existing data for each week (locked, draft, or None)
+    week_data = {}
+    for w, status in zip(weeks, week_statuses):
+        if status == "locked":
+            cfg = load_locked_config(w)
+            week_data[str(w)] = {r["location_id"]: r["revenue_band"] for _, r in cfg.iterrows()} if cfg is not None else {}
+        elif status == "draft":
+            cfg = load_draft_config(w)
+            week_data[str(w)] = {r["location_id"]: r["revenue_band"] for _, r in cfg.iterrows()} if cfg is not None else {}
+        else:
+            week_data[str(w)] = {}
 
-    with st.form("revenue_bands_form"):
-        new_bands = {}
-        for idx, row in ref_df.iterrows():
+    # --- Header row with status badges ---
+    st.markdown("""<style>
+    .week-locked { color: #fff; background: #2B3A4E; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+    .week-draft { color: #2B3A4E; background: #C49A5C; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+    .week-open { color: #666; background: #eee; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+    </style>""", unsafe_allow_html=True)
+
+    header_cols = st.columns([2, 3] + [2] * 5)
+    with header_cols[0]:
+        st.markdown("**Store #**")
+    with header_cols[1]:
+        st.markdown("**Store Name**")
+    for i, (w, label, status) in enumerate(zip(weeks, week_labels, week_statuses)):
+        with header_cols[i + 2]:
+            if status == "locked":
+                st.markdown(f"**{label}**<br><span class='week-locked'>Locked</span>", unsafe_allow_html=True)
+            elif status == "draft":
+                st.markdown(f"**{label}**<br><span class='week-draft'>Draft</span>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"**{label}**<br><span class='week-open'>Open</span>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # --- Grid form ---
+    with st.form("revenue_bands_grid"):
+        grid_data = {str(w): {} for w in weeks}
+
+        for _, row in ref_df.iterrows():
+            store_id = row["location_id"]
+            store_name = row["store_name"]
             current_band = row["revenue_band"] if pd.notna(row["revenue_band"]) else "<25k"
-            current_idx = BAND_OPTIONS.index(current_band) if current_band in BAND_OPTIONS else 0
-            goal_str = f"({band_goals.get(current_band, '?')} hrs)" if current_band in band_goals else ""
 
-            col1, col2, col3 = st.columns([2, 3, 3])
-            with col1:
-                st.text(row["location_id"])
-            with col2:
-                st.text(row["store_name"])
-            with col3:
-                new_bands[row["location_id"]] = st.selectbox(
-                    f"Band for {row['location_id']}",
-                    BAND_OPTIONS,
-                    index=current_idx,
-                    key=f"band_{row['location_id']}",
-                    label_visibility="collapsed",
-                )
+            cols = st.columns([2, 3] + [2] * 5)
+            with cols[0]:
+                st.text(store_id)
+            with cols[1]:
+                st.text(store_name)
 
-        save_btn = st.form_submit_button("Save Changes", type="primary", use_container_width=True)
+            for i, (w, status) in enumerate(zip(weeks, week_statuses)):
+                w_str = str(w)
+                # Get band for this week: from DB if exists, else from current config
+                existing_band = week_data[w_str].get(store_id, current_band)
+                band_idx = BAND_OPTIONS.index(existing_band) if existing_band in BAND_OPTIONS else 0
 
-    if save_btn:
-        for store_id, band in new_bands.items():
-            ref_df.loc[ref_df["location_id"] == store_id, "revenue_band"] = band
-        save_reference_data_bulk(ref_df)
-        st.success("Revenue bands saved! These will apply to the next unlocked week.")
+                with cols[i + 2]:
+                    if status == "locked":
+                        st.text(existing_band)
+                        grid_data[w_str][store_id] = existing_band
+                    else:
+                        grid_data[w_str][store_id] = st.selectbox(
+                            f"Band {store_id} {w_str}",
+                            BAND_OPTIONS,
+                            index=band_idx,
+                            key=f"band_{store_id}_{w_str}",
+                            label_visibility="collapsed",
+                        )
+
+        st.divider()
+
+        # Action buttons row
+        btn_cols = st.columns([2, 3] + [2] * 5)
+        with btn_cols[0]:
+            save_drafts_btn = st.form_submit_button("Save All Drafts", type="primary")
+
+    # Handle save
+    if save_drafts_btn:
+        for w, status in zip(weeks, week_statuses):
+            if status != "locked":
+                w_str = str(w)
+                save_draft_bands(w, grid_data[w_str], ref_df, band_goals)
+        st.success("Drafts saved!")
         st.cache_data.clear()
         st.rerun()
+
+    # Lock buttons (outside form since forms can only have one submit)
+    st.subheader("Lock a Week")
+    st.caption("Locking a week freezes its bands. Once locked, changes require admin override.")
+    lock_cols = st.columns(5)
+    for i, (w, label, status) in enumerate(zip(weeks, week_labels, week_statuses)):
+        with lock_cols[i]:
+            if status == "locked":
+                st.success(f"{label}: Locked")
+            elif status == "draft":
+                if st.button(f"Lock {label}", key=f"lock_btn_{w}"):
+                    lock_drafts(w)
+                    log_change(
+                        user_email=st.experimental_user.email if hasattr(st, "experimental_user") and st.experimental_user else "admin",
+                        week_start=w,
+                        location_id="ALL",
+                        field_changed="week_lock",
+                        old_value="draft",
+                        new_value="locked",
+                        action="manual-lock",
+                    )
+                    st.success(f"Locked {label}!")
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.info(f"{label}: Save drafts first")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1310,7 +1390,8 @@ elif page == "Weekly Config":
         st.error("Could not load locked config for this week.")
         st.stop()
 
-    st.subheader(f"Locked Config: {week_labels[selected_week]}")
+    week_status = get_week_status(selected_week)
+    st.subheader(f"Config: {week_labels[selected_week]}  ({week_status or 'unknown'})")
 
     # Show source info
     all_locks = _cached_all_locks()

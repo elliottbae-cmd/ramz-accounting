@@ -121,20 +121,19 @@ def remove_dm(dm_name):
 # Weekly locks
 # ---------------------------------------------------------------------------
 def load_all_locks():
-    """Load all weekly lock data. Returns a DataFrame."""
+    """Load all weekly lock data (locked only). Returns a DataFrame."""
     sb = get_supabase()
     resp = sb.table("weekly_locks").select(
-        "week_start, location_id, store_name, dm, revenue_band, hourly_goal, source"
-    ).order("week_start").execute()
+        "week_start, location_id, store_name, dm, revenue_band, hourly_goal, source, status"
+    ).eq("status", "locked").order("week_start").execute()
     if resp.data:
         df = pd.DataFrame(resp.data)
         df["hourly_goal"] = pd.to_numeric(df["hourly_goal"], errors="coerce").fillna(0)
-        # Ensure week_start is string for compatibility
         df["week_start"] = df["week_start"].astype(str)
         return df
     return pd.DataFrame(columns=[
         "week_start", "location_id", "store_name", "dm",
-        "revenue_band", "hourly_goal", "source",
+        "revenue_band", "hourly_goal", "source", "status",
     ])
 
 
@@ -144,7 +143,7 @@ def load_locked_config(week_start):
     week_str = str(week_start)
     resp = sb.table("weekly_locks").select(
         "location_id, store_name, dm, revenue_band, hourly_goal"
-    ).eq("week_start", week_str).execute()
+    ).eq("week_start", week_str).eq("status", "locked").execute()
     if resp.data:
         df = pd.DataFrame(resp.data)
         df["hourly_goal"] = pd.to_numeric(df["hourly_goal"], errors="coerce").fillna(0)
@@ -158,19 +157,55 @@ def lock_exists(week_start):
     week_str = str(week_start)
     resp = sb.table("weekly_locks").select(
         "id", count="exact"
-    ).eq("week_start", week_str).limit(1).execute()
+    ).eq("week_start", week_str).eq("status", "locked").limit(1).execute()
     return resp.count > 0
 
 
-def create_lock(week_start, ref_data, band_goals, source="manual"):
-    """Create a weekly lock snapshot."""
+def draft_exists(week_start):
+    """Check if drafts exist for the given week."""
+    sb = get_supabase()
+    week_str = str(week_start)
+    resp = sb.table("weekly_locks").select(
+        "id", count="exact"
+    ).eq("week_start", week_str).eq("status", "draft").limit(1).execute()
+    return resp.count > 0
+
+
+def load_draft_config(week_start):
+    """Load draft config for a specific week. Returns DataFrame or None."""
+    sb = get_supabase()
+    week_str = str(week_start)
+    resp = sb.table("weekly_locks").select(
+        "location_id, store_name, dm, revenue_band, hourly_goal"
+    ).eq("week_start", week_str).eq("status", "draft").execute()
+    if resp.data:
+        df = pd.DataFrame(resp.data)
+        df["hourly_goal"] = pd.to_numeric(df["hourly_goal"], errors="coerce").fillna(0)
+        return df
+    return None
+
+
+def get_week_status(week_start):
+    """Return the status of a week: 'locked', 'draft', or None."""
+    sb = get_supabase()
+    week_str = str(week_start)
+    resp = sb.table("weekly_locks").select("status").eq(
+        "week_start", week_str
+    ).limit(1).execute()
+    if resp.data:
+        return resp.data[0]["status"]
+    return None
+
+
+def create_lock(week_start, ref_data, band_goals, source="manual", status="locked"):
+    """Create a weekly lock or draft snapshot."""
     sb = get_supabase()
     week_str = str(week_start)
 
     # Remove existing entries for this week
     sb.table("weekly_locks").delete().eq("week_start", week_str).execute()
 
-    # Build new lock entries
+    # Build new entries
     rows = []
     for _, row in ref_data.iterrows():
         band = row.get("revenue_band", "<25k")
@@ -183,10 +218,49 @@ def create_lock(week_start, ref_data, band_goals, source="manual"):
             "revenue_band": band,
             "hourly_goal": goal,
             "source": source,
+            "status": status,
         })
 
     sb.table("weekly_locks").insert(rows).execute()
     return pd.DataFrame(rows)
+
+
+def save_draft_bands(week_start, store_bands, ref_data, band_goals):
+    """Save draft revenue bands for a future week.
+    store_bands: dict of {location_id: revenue_band}
+    """
+    sb = get_supabase()
+    week_str = str(week_start)
+
+    # Remove existing entries for this week
+    sb.table("weekly_locks").delete().eq("week_start", week_str).execute()
+
+    rows = []
+    for _, row in ref_data.iterrows():
+        store_id = row["location_id"]
+        band = store_bands.get(store_id, row.get("revenue_band", "<25k"))
+        goal = band_goals.get(band, 0)
+        rows.append({
+            "week_start": week_str,
+            "location_id": store_id,
+            "store_name": row["store_name"],
+            "dm": row.get("dm", ""),
+            "revenue_band": band,
+            "hourly_goal": goal,
+            "source": "draft",
+            "status": "draft",
+        })
+
+    sb.table("weekly_locks").insert(rows).execute()
+
+
+def lock_drafts(week_start):
+    """Promote drafts to locked for a given week."""
+    sb = get_supabase()
+    week_str = str(week_start)
+    sb.table("weekly_locks").update(
+        {"status": "locked", "source": "manual-lock"}
+    ).eq("week_start", week_str).eq("status", "draft").execute()
 
 
 def delete_week_lock(week_start):

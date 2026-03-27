@@ -20,6 +20,7 @@ from supabase_db import (
     create_lock, override_locked_value as _db_override,
     get_locked_weeks, log_change, load_change_log,
     load_admin_users, is_admin, add_admin, remove_admin,
+    draft_exists, lock_drafts, load_draft_config,
 )
 
 
@@ -79,6 +80,20 @@ def ensure_current_week_locked(ref_data, band_goals, ref_date=None):
     locked = load_locked_config(week_start)
     if locked is not None:
         return locked
+
+    # Check if drafts exist → promote to locked
+    if draft_exists(week_start):
+        lock_drafts(week_start)
+        log_change(
+            user_email="system",
+            week_start=week_start,
+            location_id="ALL",
+            field_changed="week_lock",
+            old_value="draft",
+            new_value=str(week_start),
+            action="draft-to-lock",
+        )
+        return load_locked_config(week_start)
 
     # Check previous week for carry-forward
     prev_week = week_start - timedelta(days=7)
