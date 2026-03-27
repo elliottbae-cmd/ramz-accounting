@@ -8,6 +8,9 @@ data/
 !labor/band_goals.csv
 !labor/dm_list.csv
 
+# Streamlit secrets (contains API keys)
+.streamlit/secrets.toml
+
 # Python
 __pycache__/
 *.pyc

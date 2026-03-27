@@ -19,9 +19,13 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-# ---------------------------------------------------------------------------
-# Paths to CSV config files (next to this module)
-# ---------------------------------------------------------------------------
+from db import (
+    load_reference_data as _db_load_reference_data,
+    load_band_goals as _db_load_band_goals,
+    load_dm_list as _db_load_dm_list,
+)
+
+# Legacy paths kept for backward compatibility with seed script
 _HERE = Path(__file__).parent
 REFERENCE_DATA_PATH = _HERE / "reference_data.csv"
 BAND_GOALS_PATH = _HERE / "band_goals.csv"
@@ -66,23 +70,26 @@ def _subtotal_border():
 # Reference data loaders
 # ---------------------------------------------------------------------------
 def load_reference_data(path=None):
-    """Load store reference data (location_id, store_name, dm, revenue_band)."""
-    p = Path(path) if path else REFERENCE_DATA_PATH
-    return pd.read_csv(p, sep="|", dtype=str)
+    """Load store reference data from Supabase (or CSV fallback)."""
+    if path:
+        return pd.read_csv(Path(path), sep="|", dtype=str)
+    return _db_load_reference_data()
 
 
 def load_band_goals(path=None):
-    """Load revenue band → hourly goal mapping. Returns a dict."""
-    p = Path(path) if path else BAND_GOALS_PATH
-    df = pd.read_csv(p, sep="|")
-    return dict(zip(df["revenue_band"], df["hourly_goal"].astype(float)))
+    """Load revenue band → hourly goal mapping from Supabase (or CSV fallback)."""
+    if path:
+        df = pd.read_csv(Path(path), sep="|")
+        return dict(zip(df["revenue_band"], df["hourly_goal"].astype(float)))
+    return _db_load_band_goals()
 
 
 def load_dm_list(path=None):
-    """Load list of DM names."""
-    p = Path(path) if path else DM_LIST_PATH
-    df = pd.read_csv(p)
-    return sorted(df["dm_name"].dropna().unique().tolist())
+    """Load list of DM names from Supabase (or CSV fallback)."""
+    if path:
+        df = pd.read_csv(Path(path))
+        return sorted(df["dm_name"].dropna().unique().tolist())
+    return _db_load_dm_list()
 
 
 # ---------------------------------------------------------------------------

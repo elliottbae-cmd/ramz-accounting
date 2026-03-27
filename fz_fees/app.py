@@ -30,20 +30,20 @@ from reconcile import (
 from avs_engine import (
     load_reference_data, load_band_goals, load_dm_list,
     generate_weekly_report, generate_midweek_report,
-    REFERENCE_DATA_PATH, BAND_GOALS_PATH, DM_LIST_PATH,
 )
 from weekly_lock import (
     get_week_start, get_week_end, get_next_week_start, format_week_label,
     load_locked_config, lock_exists, create_lock,
     ensure_current_week_locked, override_locked_value, get_locked_weeks,
     load_change_log, is_admin, load_admin_users, add_admin, remove_admin,
-    WEEKLY_LOCK_PATH, CHANGE_LOG_PATH, ADMIN_USERS_PATH,
+)
+from db import (
+    load_stores, save_store, delete_store,
+    save_reference_data_row, save_reference_data_bulk, delete_reference_data,
+    save_band_goals, add_dm, remove_dm as db_remove_dm,
+    load_all_locks,
 )
 
-# ---------------------------------------------------------------------------
-# Config paths
-# ---------------------------------------------------------------------------
-LOCATIONS_PATH = _FZ_DIR / "locations.csv"
 
 # ---------------------------------------------------------------------------
 # Revenue band options (for dropdowns)
@@ -54,7 +54,7 @@ BAND_OPTIONS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Cached data loaders (avoid re-reading CSV on every Streamlit rerun)
+# Cached data loaders (avoid re-reading on every Streamlit rerun)
 # ---------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def _cached_reference_data():
@@ -70,7 +70,6 @@ def _cached_dm_list():
 
 @st.cache_data(ttl=60)
 def _cached_all_locks():
-    from weekly_lock import load_all_locks
     return load_all_locks()
 
 # ---------------------------------------------------------------------------
@@ -312,12 +311,12 @@ if page == "FZ Fee Reconciliation":
     # --- Input Files (main content area) ---
     st.subheader("Input Files")
 
-    if LOCATIONS_PATH.exists():
-        loc_df = pd.read_csv(LOCATIONS_PATH, sep="|", dtype=str)
+    loc_df = load_stores()
+    if not loc_df.empty:
         st.success(f"Locations master: {len(loc_df)} stores")
-        locations_source = str(LOCATIONS_PATH)
+        locations_source = "supabase"
     else:
-        st.warning("locations.csv not found — please upload it.")
+        st.warning("No stores found — please upload a locations CSV or add stores in Settings.")
         loc_upload = st.file_uploader("Locations Master (.csv)", type=["csv"], key="loc")
         locations_source = loc_upload
 
@@ -362,7 +361,11 @@ if page == "FZ Fee Reconciliation":
         try:
             with st.status("Running reconciliation...", expanded=True) as status:
                 st.write("Loading locations master...")
-                locations = load_locations(locations_source)
+                if locations_source == "supabase":
+                    locations = loc_df[["location_id", "store_name"]].copy()
+                    locations["location_id"] = locations["location_id"].str.strip().str.upper()
+                else:
+                    locations = load_locations(locations_source)
 
                 st.write("Loading FZ fee schedule...")
                 fz_df, fz_week_end_dt = load_fz_schedule(fz_file)
@@ -1018,12 +1021,10 @@ elif page == "Manage Stores":
     st.title("Manage Store Locations")
     st.caption("Add or remove stores from the master locations list.")
 
-    if LOCATIONS_PATH.exists():
-        stores_df = pd.read_csv(LOCATIONS_PATH, sep="|", dtype=str)
+    stores_df = load_stores()
+    if not stores_df.empty:
         stores_df["location_id"] = stores_df["location_id"].str.strip().str.upper()
         stores_df["store_name"] = stores_df["store_name"].str.strip()
-    else:
-        stores_df = pd.DataFrame(columns=["location_id", "store_name"])
 
     st.subheader(f"Current Stores ({len(stores_df)})")
     if not stores_df.empty:
@@ -1055,25 +1056,15 @@ elif page == "Manage Stores":
         elif new_id_clean in stores_df["location_id"].values:
             st.error(f"Store {new_id_clean} already exists.")
         else:
-            new_row = pd.DataFrame([{"location_id": new_id_clean, "store_name": new_name_clean}])
-            updated_df = pd.concat([stores_df, new_row], ignore_index=True)
-            updated_df = updated_df.sort_values("location_id").reset_index(drop=True)
-            updated_df.to_csv(LOCATIONS_PATH, sep="|", index=False)
+            save_store(new_id_clean, new_name_clean)
 
-            # Also add to reference_data.csv with defaults
-            if REFERENCE_DATA_PATH.exists():
-                ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
-                if new_id_clean not in ref_df["location_id"].values:
-                    dm_list = _cached_dm_list()
-                    new_ref = pd.DataFrame([{
-                        "location_id": new_id_clean,
-                        "store_name": new_name_clean,
-                        "dm": dm_list[0] if dm_list else "",
-                        "revenue_band": "<25k",
-                    }])
-                    ref_df = pd.concat([ref_df, new_ref], ignore_index=True)
-                    ref_df = ref_df.sort_values("location_id").reset_index(drop=True)
-                    ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
+            # Also add to reference_data with defaults
+            dm_list = _cached_dm_list()
+            save_reference_data_row(
+                new_id_clean, new_name_clean,
+                dm_list[0] if dm_list else "",
+                "<25k",
+            )
 
             st.success(f"Added store {new_id_clean} — {new_name_clean}")
             st.cache_data.clear()
@@ -1090,14 +1081,8 @@ elif page == "Manage Stores":
             remove_id = selected.split("  —  ")[0].strip()
             st.warning(f"This will remove **{selected}** from the master list.")
             if st.button("Confirm Remove", type="primary"):
-                updated_df = stores_df[stores_df["location_id"] != remove_id].copy()
-                updated_df.to_csv(LOCATIONS_PATH, sep="|", index=False)
-
-                # Also remove from reference_data.csv
-                if REFERENCE_DATA_PATH.exists():
-                    ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
-                    ref_df = ref_df[ref_df["location_id"] != remove_id]
-                    ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
+                delete_store(remove_id)
+                delete_reference_data(remove_id)
 
                 st.success(f"Removed store {remove_id}")
                 st.cache_data.clear()
@@ -1115,11 +1100,11 @@ elif page == "Store Revenue Bands":
 
     show_week_deadline_banner()
 
-    if not REFERENCE_DATA_PATH.exists():
-        st.error("Reference data file not found. Please add stores first.")
+    ref_df = _cached_reference_data()
+    if ref_df.empty:
+        st.error("No reference data found. Please add stores first.")
         st.stop()
 
-    ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
     ref_df = ref_df.sort_values("location_id").reset_index(drop=True)
 
     # Load band goals for the info display
@@ -1156,7 +1141,7 @@ elif page == "Store Revenue Bands":
     if save_btn:
         for store_id, band in new_bands.items():
             ref_df.loc[ref_df["location_id"] == store_id, "revenue_band"] = band
-        ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
+        save_reference_data_bulk(ref_df)
         st.success("Revenue bands saved! These will apply to the next unlocked week.")
         st.cache_data.clear()
         st.rerun()
@@ -1186,9 +1171,7 @@ elif page == "DM Assignments":
             if dm_name in dm_list:
                 st.error(f"{dm_name} already exists.")
             else:
-                dm_list.append(dm_name)
-                dm_list.sort()
-                pd.DataFrame({"dm_name": dm_list}).to_csv(DM_LIST_PATH, index=False)
+                add_dm(dm_name)
                 st.success(f"Added DM: {dm_name}")
                 st.cache_data.clear()
                 st.rerun()
@@ -1199,8 +1182,7 @@ elif page == "DM Assignments":
                 remove_dm = st.selectbox("Remove DM", dm_list, index=None, placeholder="Choose a DM...")
                 remove_dm_btn = st.form_submit_button("Remove DM")
             if remove_dm_btn and remove_dm:
-                dm_list.remove(remove_dm)
-                pd.DataFrame({"dm_name": dm_list}).to_csv(DM_LIST_PATH, index=False)
+                db_remove_dm(remove_dm)
                 st.success(f"Removed DM: {remove_dm}")
                 st.cache_data.clear()
                 st.rerun()
@@ -1210,11 +1192,11 @@ elif page == "DM Assignments":
     # --- Store-to-DM Assignment ---
     st.subheader("Store-to-DM Assignments")
 
-    if not REFERENCE_DATA_PATH.exists():
-        st.error("Reference data file not found.")
+    ref_df = _cached_reference_data()
+    if ref_df.empty:
+        st.error("No reference data found.")
         st.stop()
 
-    ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
     ref_df = ref_df.sort_values("location_id").reset_index(drop=True)
     dm_list = _cached_dm_list()
 
@@ -1247,7 +1229,7 @@ elif page == "DM Assignments":
     if save_btn:
         for store_id, dm in new_dms.items():
             ref_df.loc[ref_df["location_id"] == store_id, "dm"] = dm
-        ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
+        save_reference_data_bulk(ref_df)
         st.success("DM assignments saved! These will apply to the next unlocked week.")
         st.cache_data.clear()
         st.rerun()
@@ -1285,11 +1267,7 @@ elif page == "Hourly Goals":
         save_btn = st.form_submit_button("Save Changes", type="primary", use_container_width=True)
 
     if save_btn:
-        goals_df = pd.DataFrame([
-            {"revenue_band": band, "hourly_goal": goal}
-            for band, goal in new_goals.items()
-        ])
-        goals_df.to_csv(BAND_GOALS_PATH, sep="|", index=False)
+        save_band_goals(new_goals)
         st.success("Hourly goals saved! These will apply to the next unlocked week.")
         st.cache_data.clear()
         st.rerun()
