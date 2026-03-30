@@ -37,7 +37,6 @@ from weekly_lock import (
     load_locked_config, lock_exists, create_lock,
     ensure_current_week_locked, override_locked_value, get_locked_weeks,
     load_change_log, is_admin, load_admin_users, add_admin, remove_admin,
-    WEEKLY_LOCK_PATH, CHANGE_LOG_PATH, ADMIN_USERS_PATH,
 )
 
 # ---------------------------------------------------------------------------
