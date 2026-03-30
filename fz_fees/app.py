@@ -1364,10 +1364,15 @@ elif page == "Store Revenue Bands":
     .week-locked { color: #fff; background: #2B3A4E; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
     .week-draft { color: #2B3A4E; background: #C49A5C; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
     .week-open { color: #666; background: #eee; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+    /* Fix overflow so sticky works in Streamlit */
+    section.main > div { overflow: visible !important; }
+    .stMainBlockContainer { overflow: visible !important; }
+    div[data-testid="stVerticalBlockBorderWrapper"] { overflow: visible !important; }
+    div[data-testid="stVerticalBlock"] { overflow: visible !important; }
     </style>""", unsafe_allow_html=True)
 
     # Build header as an HTML table that stays visible
-    header_html = "<div style='position:sticky;top:0;background:white;z-index:999;padding:8px 0;border-bottom:2px solid #C49A5C;'><table style='width:100%;table-layout:fixed;'><tr>"
+    header_html = "<div style='position:sticky;top:3.5rem;background:white;z-index:999;padding:8px 0;border-bottom:2px solid #C49A5C;'><table style='width:100%;table-layout:fixed;'><tr>"
     col_labels = ["Store #", "Store Name"]
     for w, label, status in zip(weeks, week_labels, week_statuses):
         if w == current_week:
