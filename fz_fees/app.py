@@ -1244,6 +1244,143 @@ elif page == "Store Revenue Bands":
             else:
                 st.info(f"{label}: Save drafts first")
 
+    # --- Export to Excel ---
+    st.divider()
+    st.subheader("Export to Excel")
+    st.caption("Export store config (Store #, Store Name, Revenue Band, Hourly Goal) for selected weeks.")
+
+    export_options = []
+    for w, label, status in zip(weeks, week_labels, week_statuses):
+        if status in ("locked", "draft"):
+            export_options.append((w, label, status))
+
+    if not export_options:
+        st.info("No locked or drafted weeks available to export.")
+    else:
+        export_choices = [f"{label} ({status})" for _, label, status in export_options]
+        selected_exports = st.multiselect(
+            "Select weeks to export",
+            export_choices,
+            default=[export_choices[0]] if export_choices else [],
+            key="rev_band_export_select",
+        )
+
+        if st.button("Export to Excel", key="rev_band_export_btn", type="primary"):
+            if not selected_exports:
+                st.warning("Please select at least one week.")
+            else:
+                from openpyxl import Workbook
+                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+                wb = Workbook()
+                wb.remove(wb.active)
+
+                NAVY = "2B3A4E"
+                GOLD = "C49A5C"
+                GOLD_LIGHT = "F5F0EB"
+                WHITE = "FFFFFF"
+                GRAY_BG = "F7F7F7"
+
+                header_font = Font(name="Calibri", bold=True, color=WHITE, size=11)
+                header_fill = PatternFill("solid", fgColor=NAVY)
+                subheader_font = Font(name="Calibri", bold=True, color=NAVY, size=10)
+                data_font = Font(name="Calibri", size=10)
+                center = Alignment(horizontal="center", vertical="center")
+                left = Alignment(horizontal="left", vertical="center")
+                thin_border = Border(
+                    left=Side(style="thin", color="CCCCCC"),
+                    right=Side(style="thin", color="CCCCCC"),
+                    top=Side(style="thin", color="CCCCCC"),
+                    bottom=Side(style="thin", color="CCCCCC"),
+                )
+                stripe_fill = PatternFill("solid", fgColor=GRAY_BG)
+
+                for choice in selected_exports:
+                    idx = export_choices.index(choice)
+                    w, label, status = export_options[idx]
+
+                    if status == "locked":
+                        cfg = load_locked_config(w)
+                    else:
+                        cfg = load_draft_config(w)
+
+                    if cfg is None or cfg.empty:
+                        continue
+
+                    # Build data with hourly goals
+                    cfg = cfg.sort_values("location_id").reset_index(drop=True)
+
+                    # Sheet name (max 31 chars for Excel)
+                    sheet_name = label.replace(" – ", "-").replace("/", "-")[:31]
+                    ws = wb.create_sheet(title=sheet_name)
+
+                    # Title row
+                    ws.merge_cells("A1:D1")
+                    title_cell = ws["A1"]
+                    title_cell.value = f"Ram-Z Restaurant Group — Store Config: {label}"
+                    title_cell.font = Font(name="Calibri", bold=True, color=NAVY, size=14)
+                    title_cell.alignment = left
+
+                    # Status row
+                    ws.merge_cells("A2:D2")
+                    status_cell = ws["A2"]
+                    status_cell.value = f"Status: {status.upper()}"
+                    status_cell.font = Font(name="Calibri", bold=True, color=GOLD[0:6], size=10)
+
+                    # Headers
+                    headers = ["Store #", "Store Name", "Revenue Band", "Hourly Goal"]
+                    for col_idx, h in enumerate(headers, 1):
+                        cell = ws.cell(row=4, column=col_idx, value=h)
+                        cell.font = header_font
+                        cell.fill = header_fill
+                        cell.alignment = center
+                        cell.border = thin_border
+
+                    # Data rows
+                    for row_idx, (_, r) in enumerate(cfg.iterrows(), 5):
+                        values = [
+                            r.get("location_id", ""),
+                            r.get("store_name", ""),
+                            r.get("revenue_band", ""),
+                            float(r.get("hourly_goal", 0)) if pd.notna(r.get("hourly_goal")) else 0,
+                        ]
+                        for col_idx, val in enumerate(values, 1):
+                            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                            cell.font = data_font
+                            cell.border = thin_border
+                            if col_idx in (1, 3, 4):
+                                cell.alignment = center
+                            else:
+                                cell.alignment = left
+                            if row_idx % 2 == 1:
+                                cell.fill = stripe_fill
+                            # Format hourly goal as integer
+                            if col_idx == 4:
+                                cell.number_format = "#,##0"
+
+                    # Auto-fit column widths
+                    for col_idx in range(1, 5):
+                        max_len = len(headers[col_idx - 1])
+                        for row_idx in range(5, 5 + len(cfg)):
+                            val = ws.cell(row=row_idx, column=col_idx).value
+                            if val:
+                                max_len = max(max_len, len(str(val)))
+                        ws.column_dimensions[chr(64 + col_idx)].width = max_len + 3
+
+                buf = BytesIO()
+                wb.save(buf)
+                buf.seek(0)
+
+                week_count = len(selected_exports)
+                filename = f"RamZ_Store_Config_{'_'.join(str(export_options[export_choices.index(c)][0].strftime('%m%d')) for c in selected_exports)}.xlsx"
+                st.download_button(
+                    label=f"Download ({week_count} week{'s' if week_count > 1 else ''})",
+                    data=buf,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rev_band_download",
+                )
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: DM Assignments
