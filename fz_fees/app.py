@@ -1436,9 +1436,11 @@ elif page == "Store Revenue Bands":
             continue
         if st.session_state.get(f"save_draft_{w}"):
             w_str = str(w)
-            save_draft_bands(w, grid_data[w_str], ref_df, band_goals)
-            st.success(f"Draft saved for {label}!")
+            # Always grab the latest hourly goals from Supabase (bypass cache)
             st.cache_data.clear()
+            fresh_goals = load_band_goals()
+            save_draft_bands(w, grid_data[w_str], ref_df, fresh_goals)
+            st.success(f"Draft saved for {label}!")
             st.rerun()
 
     # Lock buttons (outside form since forms can only have one submit)
