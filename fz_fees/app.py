@@ -747,8 +747,8 @@ elif page == "AVS Performance - Store Level":
     for wc in week_cols:
         pivot[wc] = pivot[wc].round(0).astype(int)
 
-    # --- Ranking: avg variance, most over goal ranked last ---
-    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).mean(axis=1).fillna(0)
+    # --- Ranking: closest to goal (absolute variance) ranked first ---
+    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).abs().mean(axis=1).fillna(0)
     pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
     pivot.insert(0, "Rank", range(1, len(pivot) + 1))
     pivot = pivot.drop(columns=["_sort_var"])
@@ -921,8 +921,8 @@ elif page == "AVS Performance - DMs":
     for wc in week_cols:
         pivot[wc] = pivot[wc].round(0).astype(int)
 
-    # --- Ranking: avg variance, most over goal ranked last ---
-    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).mean(axis=1).fillna(0)
+    # --- Ranking: closest to goal (absolute variance) ranked first ---
+    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).abs().mean(axis=1).fillna(0)
     pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
     pivot.insert(0, "Rank", range(1, len(pivot) + 1))
     pivot = pivot.drop(columns=["_sort_var"])

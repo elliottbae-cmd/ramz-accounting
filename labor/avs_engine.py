@@ -412,7 +412,9 @@ def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_da
 
     ranked = df.copy()
     ranked["labor_pct"] = ranked["loaded_payroll"] / ranked["Last Week Net Sales"]
-    ranked = ranked.sort_values("Variance", ascending=True).reset_index(drop=True)
+    ranked["_abs_var"] = ranked["Variance"].abs()
+    ranked = ranked.sort_values("_abs_var", ascending=True).reset_index(drop=True)
+    ranked = ranked.drop(columns=["_abs_var"])
 
     for rank_idx, row in ranked.iterrows():
         rn = rank_idx + 3
@@ -486,7 +488,7 @@ def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_da
             "Est. Payroll Expense": round(dm_payroll_t, 2), "Est. Labor %": dm_lp,
         })
 
-    dm_ranked = sorted(dm_summary, key=lambda x: x["Variance"])
+    dm_ranked = sorted(dm_summary, key=lambda x: abs(x["Variance"]))
     for rank_idx, dm_row in enumerate(dm_ranked):
         rn = rank_idx + 3
         variance = dm_row["Variance"]
