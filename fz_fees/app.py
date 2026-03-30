@@ -40,7 +40,8 @@ from weekly_lock import (
 from supabase_db import (
     load_stores, save_store, delete_store,
     save_reference_data_row, save_reference_data_bulk, delete_reference_data,
-    save_band_goals, add_dm, remove_dm as db_remove_dm,
+    save_band_goals, load_band_goals as load_band_goals_db,
+    add_dm, remove_dm as db_remove_dm,
     load_all_locks, delete_week_lock, log_change,
     save_weekly_actuals, load_weekly_actuals, delete_weekly_actuals,
     draft_exists, load_draft_config, save_draft_bands, lock_drafts,
@@ -65,7 +66,7 @@ def _cached_reference_data():
 
 @st.cache_data(ttl=60)
 def _cached_band_goals():
-    return load_band_goals()
+    return load_band_goals_db()
 
 @st.cache_data(ttl=60)
 def _cached_dm_list():
