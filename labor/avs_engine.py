@@ -496,7 +496,7 @@ def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_da
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    return buf
+    return buf, df
 
 
 # ---------------------------------------------------------------------------
@@ -650,7 +650,7 @@ def _generate_midweek_base(adp_file, ref_data, band_goals, report_dates,
 DAY_THRESHOLDS = {
     "Friday":    {"green_min": 0.1179, "green_max": 0.1679, "red_above": 0.1678},
     "Saturday":  {"green_min": 0.2607, "green_max": 0.3107, "red_above": 0.3108},
-    "Sunday":    {"green_min": 0.4036, "green_max": 0.4536, "red_above": 0.4536},
+    "Sunday":    {"green_min": 0.54, "green_max": 0.599, "red_above": 0.60},
     "Monday":    {"green_min": 0.5464, "green_max": 0.5964, "red_above": 0.5964},
     "Tuesday":   {"green_min": 0.6893, "green_max": 0.7393, "red_above": 0.7394},
     "Wednesday": {"green_min": 0.8321, "green_max": 0.8821, "red_above": 0.8822},
@@ -680,11 +680,11 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
     ws.sheet_view.showGridLines = False
 
     headers = ["Store #", "Store Name", "DM", "Weekly Hourly Goal",
-               "Actual Hours", "Variance (Hrs)", "% of Weekly Goal Used"]
-    col_widths = [12, 34, 10, 20, 22, 18, 24]
+               "Actual Hours", "Variance (Hrs)", "% of Weekly Goal Used", "Status"]
+    col_widths = [12, 34, 10, 20, 22, 18, 24, 18]
 
     ws.row_dimensions[1].height = 36
-    ws.merge_cells("A1:G1")
+    ws.merge_cells("A1:H1")
     c = ws["A1"]
     c.value = f"AvS Mid-Week Labor Pulse — Through {through_day} — {report_dates}"
     c.font = Font(name="Arial", size=16, bold=True, color=WHITE)
@@ -716,20 +716,24 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
             dm_hours += hours
             dm_variance += variance
 
-            # Day-specific color coding
+            # Day-specific color coding and status
             if pct_used > red_above:
                 row_fill = _fill(LIGHT_RED)
+                status = "Over Pacing"
             elif green_min <= pct_used <= green_max:
                 row_fill = _fill(LIGHT_GREEN)
+                status = "On Pace"
             elif pct_used < green_min:
                 row_fill = _fill(LIGHT_ORANGE)
+                status = "Under Pacing"
             else:
                 row_fill = _fill(WHITE)
+                status = ""
             ws.row_dimensions[row_num].height = 18
 
-            vals = [row["Store #"], row["Store Name"], row["DM"], goal_v, hours, variance, pct_used]
-            fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT]
-            aligns = [_center, _left, _center, _center, _center, _center, _center]
+            vals = [row["Store #"], row["Store Name"], row["DM"], goal_v, hours, variance, pct_used, status]
+            fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT, None]
+            aligns = [_center, _left, _center, _center, _center, _center, _center, _center]
             for ci, (val, fmt, aln) in enumerate(zip(vals, fmts, aligns), 1):
                 c = ws.cell(row=row_num, column=ci, value=val)
                 c.font = Font(name="Arial", size=10)
@@ -741,9 +745,10 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
             row_num += 1
 
         dm_pct = dm_hours / dm_goal if dm_goal else 0.0
+        dm_status = "Over Pacing" if dm_pct > red_above else ("On Pace" if green_min <= dm_pct <= green_max else ("Under Pacing" if dm_pct < green_min else ""))
         ws.row_dimensions[row_num].height = 20
-        sub_vals = ["", f"{dm_name} — Subtotal", "", dm_goal, dm_hours, round(dm_variance, 2), dm_pct]
-        sub_fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT]
+        sub_vals = ["", f"{dm_name} — Subtotal", "", dm_goal, dm_hours, round(dm_variance, 2), dm_pct, dm_status]
+        sub_fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT, None]
         for ci, (val, fmt) in enumerate(zip(sub_vals, sub_fmts), 1):
             c = ws.cell(row=row_num, column=ci, value=val)
             c.font = Font(name="Arial", size=10, bold=True, color="1F3864")
@@ -759,9 +764,10 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
 
     # Grand total
     grand_pct = grand_hours / grand_goal if grand_goal else 0.0
+    grand_status = "Over Pacing" if grand_pct > red_above else ("On Pace" if green_min <= grand_pct <= green_max else ("Under Pacing" if grand_pct < green_min else ""))
     ws.row_dimensions[row_num].height = 24
-    gt_vals = ["", "GRAND TOTAL", "", grand_goal, grand_hours, round(grand_variance, 2), grand_pct]
-    gt_fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT]
+    gt_vals = ["", "GRAND TOTAL", "", grand_goal, grand_hours, round(grand_variance, 2), grand_pct, grand_status]
+    gt_fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT, None]
     for ci, (val, fmt) in enumerate(zip(gt_vals, gt_fmts), 1):
         c = ws.cell(row=row_num, column=ci, value=val)
         c.font = Font(name="Arial", size=11, bold=True, color=WHITE)
@@ -778,9 +784,9 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
     ws[f"A{row_num}"].font = Font(name="Arial", size=10, bold=True)
     row_num += 1
     legend_items = [
-        (LIGHT_RED, f"Above {red_above:.2%} of Weekly Goal — Over-pacing"),
-        (LIGHT_GREEN, f"{green_min:.2%} – {green_max:.2%} of Weekly Goal — On Track"),
-        (LIGHT_ORANGE, f"Below {green_min:.2%} of Weekly Goal — Under-pacing"),
+        (LIGHT_RED, f"Above {red_above:.0%} of Weekly Goal — Over Pacing"),
+        (LIGHT_GREEN, f"{green_min:.0%} – {green_max:.1%} of Weekly Goal — On Pace"),
+        (LIGHT_ORANGE, f"Below {green_min:.0%} of Weekly Goal — Under Pacing"),
     ]
     for hex_c, label in legend_items:
         ws.cell(row=row_num, column=1).fill = _fill(hex_c)
@@ -791,7 +797,7 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
         row_num += 1
 
     row_num += 1
-    ws.merge_cells(f"A{row_num}:G{row_num}")
+    ws.merge_cells(f"A{row_num}:H{row_num}")
     note = ws[f"A{row_num}"]
     note.value = f"* Thresholds based on expected cumulative usage through {through_day}."
     note.font = Font(name="Arial", size=9, italic=True, color="666666")
@@ -801,4 +807,4 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    return buf
+    return buf, df

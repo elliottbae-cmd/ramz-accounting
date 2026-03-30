@@ -30,20 +30,23 @@ from reconcile import (
 from avs_engine import (
     load_reference_data, load_band_goals, load_dm_list,
     generate_weekly_report, generate_midweek_report,
-    REFERENCE_DATA_PATH, BAND_GOALS_PATH, DM_LIST_PATH,
 )
 from weekly_lock import (
     get_week_start, get_week_end, get_next_week_start, format_week_label,
     load_locked_config, lock_exists, create_lock,
     ensure_current_week_locked, override_locked_value, get_locked_weeks,
     load_change_log, is_admin, load_admin_users, add_admin, remove_admin,
-    WEEKLY_LOCK_PATH, CHANGE_LOG_PATH, ADMIN_USERS_PATH,
+)
+from supabase_db import (
+    load_stores, save_store, delete_store,
+    save_reference_data_row, save_reference_data_bulk, delete_reference_data,
+    save_band_goals, add_dm, remove_dm as db_remove_dm,
+    load_all_locks, delete_week_lock, log_change,
+    save_weekly_actuals, load_weekly_actuals, delete_weekly_actuals,
+    draft_exists, load_draft_config, save_draft_bands, lock_drafts,
+    get_week_status,
 )
 
-# ---------------------------------------------------------------------------
-# Config paths
-# ---------------------------------------------------------------------------
-LOCATIONS_PATH = _FZ_DIR / "locations.csv"
 
 # ---------------------------------------------------------------------------
 # Revenue band options (for dropdowns)
@@ -52,6 +55,166 @@ BAND_OPTIONS = [
     "<25k", "25k-30k", "30k-35k", "35k-40k", "40k-45k",
     "45k-50k", "50k+", "NRO Seasoned", "NRO",
 ]
+
+# ---------------------------------------------------------------------------
+# Cached data loaders (avoid re-reading on every Streamlit rerun)
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=60)
+def _cached_reference_data():
+    return load_reference_data()
+
+@st.cache_data(ttl=60)
+def _cached_band_goals():
+    return load_band_goals()
+
+@st.cache_data(ttl=60)
+def _cached_dm_list():
+    return load_dm_list()
+
+@st.cache_data(ttl=60)
+def _cached_all_locks():
+    return load_all_locks()
+
+@st.cache_data(ttl=60)
+def _cached_weekly_actuals():
+    return load_weekly_actuals()
+
+# ---------------------------------------------------------------------------
+# In-App Report Rendering Helpers
+# ---------------------------------------------------------------------------
+def _render_weekly_preview(df):
+    """Render the AVS Weekly Report as a styled in-app table."""
+    st.subheader("AvS Summary")
+
+    display_rows = []
+    for dm_name, group in df.groupby("DM", sort=True):
+        for _, row in group.iterrows():
+            hours = float(row["actual_hours"]) if pd.notna(row["actual_hours"]) else 0.0
+            goal_v = float(row["Hourly Goal"]) if pd.notna(row["Hourly Goal"]) else 0.0
+            variance = float(row["Variance"]) if pd.notna(row["Variance"]) else 0.0
+            sales_v = float(row.get("Last Week Net Sales", 0)) if pd.notna(row.get("Last Week Net Sales")) else 0.0
+            payroll_v = float(row.get("loaded_payroll", 0)) if pd.notna(row.get("loaded_payroll")) else 0.0
+            labor_pct = payroll_v / sales_v if sales_v else 0.0
+
+            display_rows.append({
+                "Store": row["Store Name"],
+                "DM": row["DM"],
+                "Rev Band": row["Rev Band"],
+                "Hourly Goal": round(goal_v),
+                "Net Sales": round(sales_v, 2),
+                "Actual Hours": round(hours, 2),
+                "Variance": round(variance),
+                "Est. Payroll": round(payroll_v, 2),
+                "Est. Labor %": round(labor_pct * 100, 1),
+                "_abs_var": abs(variance),
+            })
+
+    preview_df = pd.DataFrame(display_rows)
+    preview_df = preview_df.sort_values("_abs_var").reset_index(drop=True)
+    preview_df.insert(0, "Rank", range(1, len(preview_df) + 1))
+    preview_df = preview_df.drop(columns=["_abs_var"])
+
+    def color_weekly(row):
+        v = row["Variance"]
+        if v > 0:
+            return ["background-color: #ffcccc"] * len(row)
+        elif v < 0:
+            return ["background-color: #ccffcc"] * len(row)
+        return ["background-color: #f2f2f2"] * len(row)
+
+    styled = preview_df.style.apply(color_weekly, axis=1).format({
+        "Net Sales": "${:,.2f}",
+        "Actual Hours": "{:,.2f}",
+        "Est. Payroll": "${:,.2f}",
+        "Est. Labor %": "{:.1f}%",
+    })
+
+    st.dataframe(styled, use_container_width=False, hide_index=True,
+                 height=(len(preview_df) + 1) * 35 + 3)
+
+    total_goal = preview_df["Hourly Goal"].sum()
+    total_hours = preview_df["Actual Hours"].sum()
+    total_variance = preview_df["Variance"].sum()
+    total_sales = preview_df["Net Sales"].sum()
+    total_payroll = preview_df["Est. Payroll"].sum()
+    total_labor = (total_payroll / total_sales * 100) if total_sales else 0
+
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.metric("Total Goal", f"{total_goal:,.0f}")
+    m2.metric("Actual Hours", f"{total_hours:,.0f}")
+    m3.metric("Variance", f"{total_variance:+,.0f}")
+    m4.metric("Net Sales", f"${total_sales:,.0f}")
+    m5.metric("Est. Payroll", f"${total_payroll:,.0f}")
+    m6.metric("Est. Labor %", f"{total_labor:.1f}%")
+
+
+def _render_midweek_preview(df, through_day, thresholds):
+    """Render the Mid-Week Pulse as a styled in-app table."""
+    green_min = thresholds["green_min"]
+    green_max = thresholds["green_max"]
+    red_above = thresholds["red_above"]
+
+    display_rows = []
+    for _, row in df.iterrows():
+        hours = float(row["actual_hours"]) if pd.notna(row["actual_hours"]) else 0.0
+        goal_v = float(row["Hourly Goal"]) if pd.notna(row["Hourly Goal"]) else 0.0
+        variance = float(row["Variance"]) if pd.notna(row["Variance"]) else 0.0
+        pct_used = hours / goal_v if goal_v > 0 else 0.0
+
+        if pct_used > red_above:
+            status = "Over Pacing"
+        elif green_min <= pct_used <= green_max:
+            status = "On Pace"
+        elif pct_used < green_min:
+            status = "Under Pacing"
+        else:
+            status = ""
+
+        display_rows.append({
+            "Store": row["Store Name"],
+            "DM": row["DM"],
+            "Hourly Goal": round(goal_v),
+            "Actual Hours": round(hours, 2),
+            "Variance": round(variance),
+            "% Used": round(pct_used * 100, 1),
+            "Status": status,
+            "_abs_var": abs(variance),
+        })
+
+    preview_df = pd.DataFrame(display_rows)
+    preview_df = preview_df.sort_values("_abs_var").reset_index(drop=True)
+    preview_df.insert(0, "Rank", range(1, len(preview_df) + 1))
+    preview_df = preview_df.drop(columns=["_abs_var"])
+
+    def color_midweek(row):
+        pct = row["% Used"] / 100
+        if pct > red_above:
+            return ["background-color: #ffcccc"] * len(row)
+        elif green_min <= pct <= green_max:
+            return ["background-color: #ccffcc"] * len(row)
+        elif pct < green_min:
+            return ["background-color: #ffe0b2"] * len(row)
+        return [""] * len(row)
+
+    styled = preview_df.style.apply(color_midweek, axis=1).format({
+        "Actual Hours": "{:,.2f}",
+        "% Used": "{:.1f}%",
+    })
+
+    st.dataframe(styled, use_container_width=False, hide_index=True,
+                 height=(len(preview_df) + 1) * 35 + 3)
+
+    total_goal = preview_df["Hourly Goal"].sum()
+    total_hours = preview_df["Actual Hours"].sum()
+    total_variance = preview_df["Variance"].sum()
+    total_pct = (total_hours / total_goal * 100) if total_goal else 0
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Goal", f"{total_goal:,.0f}")
+    m2.metric("Actual Hours", f"{total_hours:,.0f}")
+    m3.metric("Variance", f"{total_variance:+,.0f}")
+    m4.metric("% Used", f"{total_pct:.1f}%")
+
 
 # ---------------------------------------------------------------------------
 # Page setup
@@ -63,6 +226,21 @@ st.set_page_config(page_title="Ram-Z Accounting Toolbox", layout="wide")
 # ---------------------------------------------------------------------------
 st.markdown("""
 <style>
+/* --- Ram-Z Brand Colors --- */
+:root {
+    --ramz-navy: #2B3A4E;
+    --ramz-gold: #C49A5C;
+    --ramz-gold-light: #F5F0EB;
+}
+
+/* Sidebar background */
+section[data-testid="stSidebar"] {
+    background-color: var(--ramz-navy);
+}
+section[data-testid="stSidebar"] * {
+    color: #FFFFFF !important;
+}
+
 /* Tighten sidebar spacing */
 section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
 section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.15rem; }
@@ -86,30 +264,58 @@ section[data-testid="stSidebar"] button[kind="secondary"] div {
     width: 100%;
 }
 section[data-testid="stSidebar"] button[kind="secondary"]:hover {
-    background: rgba(151, 166, 195, 0.15);
+    background: rgba(196, 154, 92, 0.25);
 }
 
 /* Compact expanders */
 section[data-testid="stSidebar"] details {
     margin-top: 0.25rem;
     margin-bottom: 0.25rem;
+    background: transparent !important;
+    border: none !important;
 }
 section[data-testid="stSidebar"] details summary {
     padding: 0.3rem 0;
     font-size: 0.85rem;
+    background: transparent !important;
+}
+section[data-testid="stSidebar"] details[open] {
+    background: transparent !important;
 }
 section[data-testid="stSidebar"] details[open] [data-testid="stVerticalBlock"] {
     gap: 0.1rem;
     padding-left: 0.5rem;
 }
+/* Remove white background from expander container */
+section[data-testid="stSidebar"] [data-testid="stExpander"] {
+    background: transparent !important;
+    border: none !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+section[data-testid="stSidebar"] [data-testid="stExpander"] > div {
+    background: transparent !important;
+}
 
-/* Sidebar header */
+/* Sidebar header — gold accent */
 section[data-testid="stSidebar"] h2 {
     font-size: 1rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.75rem;
     padding-bottom: 0.25rem;
-    border-bottom: 1px solid rgba(151, 166, 195, 0.2);
+    border-bottom: 1px solid rgba(196, 154, 92, 0.5) !important;
+    color: var(--ramz-gold) !important;
 }
+
+/* Main content — accent colors */
+.stButton > button[kind="primary"] {
+    background-color: var(--ramz-gold);
+    border-color: var(--ramz-gold);
+    color: white;
+}
+.stButton > button[kind="primary"]:hover {
+    background-color: #B08A4E;
+    border-color: #B08A4E;
+}
+h1 { color: var(--ramz-navy) !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -134,7 +340,13 @@ def get_current_user_email():
     return ""
 
 current_user = get_current_user_email()
-user_is_admin = is_admin(current_user) if current_user else True  # Default admin if no auth
+# If no auth is configured, check if running locally (allow admin) vs cloud (deny admin)
+if current_user:
+    user_is_admin = is_admin(current_user)
+else:
+    # Allow admin access only if no auth is set up (dev mode) — check for known admin email fallback
+    import os
+    user_is_admin = not os.environ.get("STREAMLIT_SHARING_MODE", False)
 
 # ---------------------------------------------------------------------------
 # Navigation — use session state to avoid sticky radio buttons
@@ -146,7 +358,9 @@ ALL_PAGES = {
     "labor": [
         "AVS Weekly Report",
         "AVS Mid-Week Pulse",
-        "Performance Review",
+        "AVS Performance - Store Level",
+        "AVS Performance - DMs",
+        "GM Hot Streak",
     ],
     "settings": [
         "Manage Stores",
@@ -199,8 +413,14 @@ def render_nav_section(header, section_key, use_expander=False):
                 st.rerun()
 
 
-render_nav_section("Accounting", "accounting")
-render_nav_section("Labor", "labor")
+# --- Sidebar logo ---
+_LOGO_PATH = _FZ_DIR / "ramz_logo.png"
+if _LOGO_PATH.exists():
+    st.sidebar.image(str(_LOGO_PATH), use_container_width=True)
+    st.sidebar.markdown("---")
+
+render_nav_section("Accounting", "accounting", use_expander=True)
+render_nav_section("Labor", "labor", use_expander=True)
 render_nav_section("Settings", "settings", use_expander=True)
 if user_is_admin:
     render_nav_section("Admin", "admin", use_expander=True)
@@ -241,12 +461,12 @@ if page == "FZ Fee Reconciliation":
     # --- Input Files (main content area) ---
     st.subheader("Input Files")
 
-    if LOCATIONS_PATH.exists():
-        loc_df = pd.read_csv(LOCATIONS_PATH, sep="|", dtype=str)
+    loc_df = load_stores()
+    if not loc_df.empty:
         st.success(f"Locations master: {len(loc_df)} stores")
-        locations_source = str(LOCATIONS_PATH)
+        locations_source = "supabase"
     else:
-        st.warning("locations.csv not found — please upload it.")
+        st.warning("No stores found — please upload a locations CSV or add stores in Settings.")
         loc_upload = st.file_uploader("Locations Master (.csv)", type=["csv"], key="loc")
         locations_source = loc_upload
 
@@ -291,7 +511,11 @@ if page == "FZ Fee Reconciliation":
         try:
             with st.status("Running reconciliation...", expanded=True) as status:
                 st.write("Loading locations master...")
-                locations = load_locations(locations_source)
+                if locations_source == "supabase":
+                    locations = loc_df[["location_id", "store_name"]].copy()
+                    locations["location_id"] = locations["location_id"].str.strip().str.upper()
+                else:
+                    locations = load_locations(locations_source)
 
                 st.write("Loading FZ fee schedule...")
                 fz_df, fz_week_end_dt = load_fz_schedule(fz_file)
@@ -452,14 +676,28 @@ elif page == "AVS Weekly Report":
         try:
             with st.spinner("Generating weekly report..."):
                 # Use locked config for the report week
-                ref_data = load_reference_data()
-                band_goals = load_band_goals()
+                ref_data = _cached_reference_data()
+                band_goals = _cached_band_goals()
                 locked = ensure_current_week_locked(ref_data, band_goals, start_date)
                 # Build ref_data and band_goals from locked values
                 locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
-                buf = generate_weekly_report(adp_file, sales_file, locked, locked_band_goals, report_dates)
+                buf, report_df = generate_weekly_report(adp_file, sales_file, locked, locked_band_goals, report_dates)
+                # Save actual hours to Supabase for performance pages
+                week_start = get_week_start(start_date)
+                actuals_for_db = report_df.rename(columns={
+                    "Store #": "location_id", "Variance": "variance", "Hourly Goal": "hourly_goal",
+                }).copy()
+                if "Last Week Net Sales" in actuals_for_db.columns:
+                    actuals_for_db["net_sales"] = actuals_for_db["Last Week Net Sales"]
+                if "loaded_payroll" in actuals_for_db.columns and "Last Week Net Sales" in actuals_for_db.columns:
+                    actuals_for_db["labor_pct"] = (
+                        actuals_for_db["loaded_payroll"] / actuals_for_db["Last Week Net Sales"]
+                    ).fillna(0)
+                save_weekly_actuals(week_start, actuals_for_db)
+            st.cache_data.clear()
             # Store results in session state so they persist after rerun
             st.session_state["weekly_report_buf"] = buf
+            st.session_state["weekly_report_df"] = report_df
             st.session_state["weekly_report_fname"] = f"AVS_Labor_Report_{start_date.strftime('%m%d%Y')}.xlsx"
             st.session_state["weekly_report_week"] = format_week_label(get_week_start(start_date))
             # Auto-clear file uploaders
@@ -471,11 +709,72 @@ elif page == "AVS Weekly Report":
     if "weekly_report_buf" in st.session_state:
         st.success("Report generated!")
         st.caption(f"Used locked config for week: {st.session_state['weekly_report_week']}")
-        st.download_button("Download Weekly Report",
+
+        # --- In-App Preview ---
+        if "weekly_report_df" in st.session_state:
+            _render_weekly_preview(st.session_state["weekly_report_df"])
+
+        st.divider()
+        st.download_button("Export to Excel",
                            data=st.session_state["weekly_report_buf"],
                            file_name=st.session_state["weekly_report_fname"],
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            use_container_width=True)
+
+    # --- Report Archive ---
+    st.divider()
+    st.subheader("📂 Report Archive")
+    st.caption("View previously generated weekly reports from stored data.")
+
+    actuals = _cached_weekly_actuals()
+    if not actuals.empty:
+        available_weeks = sorted(actuals["week_start"].unique(), reverse=True)
+        week_labels = {}
+        for ws_str in available_weeks:
+            try:
+                d = date.fromisoformat(ws_str)
+                end_d = d + timedelta(days=6)
+                week_labels[ws_str] = f"Thu {d.month}/{d.day} – Wed {end_d.month}/{end_d.day}"
+            except (ValueError, TypeError):
+                week_labels[ws_str] = ws_str
+
+        selected_archive_week = st.selectbox(
+            "Select a past week", available_weeks,
+            format_func=lambda x: week_labels.get(x, x), key="archive_week_select",
+        )
+
+        if st.button("Load Archived Report", key="load_archive"):
+            all_locks = _cached_all_locks()
+            week_locks = all_locks[all_locks["week_start"] == selected_archive_week]
+            week_actuals = actuals[actuals["week_start"] == selected_archive_week]
+
+            if week_locks.empty:
+                st.warning("No lock data found for this week.")
+            elif week_actuals.empty:
+                st.warning("No actuals data found for this week.")
+            else:
+                merged = week_locks.merge(week_actuals, on="location_id", how="left", suffixes=("", "_act"))
+                archive_df = pd.DataFrame({
+                    "Store #": merged["location_id"],
+                    "Store Name": merged["store_name"],
+                    "DM": merged["dm"],
+                    "Rev Band": merged["revenue_band"],
+                    "Hourly Goal": pd.to_numeric(merged["hourly_goal"], errors="coerce").fillna(0),
+                    "actual_hours": pd.to_numeric(merged["actual_hours"], errors="coerce").fillna(0),
+                    "Variance": pd.to_numeric(merged["variance"], errors="coerce").fillna(0),
+                    "Last Week Net Sales": pd.to_numeric(merged["net_sales"], errors="coerce").fillna(0),
+                })
+                labor_pct = pd.to_numeric(merged.get("labor_pct", 0), errors="coerce").fillna(0)
+                archive_df["loaded_payroll"] = labor_pct * archive_df["Last Week Net Sales"]
+
+                st.session_state["archive_df"] = archive_df
+                st.session_state["archive_week_label"] = week_labels.get(selected_archive_week, selected_archive_week)
+
+        if "archive_df" in st.session_state:
+            st.markdown(f"**Archived Report: {st.session_state['archive_week_label']}**")
+            _render_weekly_preview(st.session_state["archive_df"])
+    else:
+        st.info("No archived reports yet. Generate weekly reports to start building the archive.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -512,13 +811,14 @@ elif page == "AVS Mid-Week Pulse":
 
         try:
             with st.spinner("Generating mid-week report..."):
-                ref_data = load_reference_data()
-                band_goals = load_band_goals()
+                ref_data = _cached_reference_data()
+                band_goals = _cached_band_goals()
                 locked = ensure_current_week_locked(ref_data, band_goals, start_date)
                 locked_band_goals = dict(zip(locked["revenue_band"], locked["hourly_goal"]))
-                buf = generate_midweek_report(adp_file, locked, locked_band_goals, report_dates, through_day)
+                buf, mw_df = generate_midweek_report(adp_file, locked, locked_band_goals, report_dates, through_day)
             # Store results in session state so they persist after rerun
             st.session_state["mw_report_buf"] = buf
+            st.session_state["mw_report_df"] = mw_df
             st.session_state["mw_report_fname"] = f"AVS_MidWeek_Report_{start_date.strftime('%m%d%Y')}.xlsx"
             st.session_state["mw_report_week"] = format_week_label(get_week_start(start_date))
             st.session_state["mw_report_day"] = through_day
@@ -531,7 +831,16 @@ elif page == "AVS Mid-Week Pulse":
     if "mw_report_buf" in st.session_state:
         st.success("Report generated!")
         st.caption(f"Used locked config for week: {st.session_state['mw_report_week']} | Thresholds: {st.session_state['mw_report_day']}")
-        st.download_button("Download Mid-Week Report",
+
+        # --- In-App Preview ---
+        if "mw_report_df" in st.session_state:
+            from labor.avs_engine import DAY_THRESHOLDS
+            day = st.session_state["mw_report_day"]
+            thresholds = DAY_THRESHOLDS.get(day, DAY_THRESHOLDS["Friday"])
+            _render_midweek_preview(st.session_state["mw_report_df"], day, thresholds)
+
+        st.divider()
+        st.download_button("Export to Excel",
                            data=st.session_state["mw_report_buf"],
                            file_name=st.session_state["mw_report_fname"],
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -539,10 +848,10 @@ elif page == "AVS Mid-Week Pulse":
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PAGE: Performance Review
+# PAGE: AVS Performance - Store Level
 # ═══════════════════════════════════════════════════════════════════════════════
-elif page == "Performance Review":
-    st.title("Performance Review")
+elif page == "AVS Performance - Store Level":
+    st.title("AVS Performance - Store Level")
     st.caption("Compare store performance (Goal vs Actual hours) across weeks.")
 
     locked_weeks = get_locked_weeks()
@@ -550,11 +859,14 @@ elif page == "Performance Review":
         st.info("No weekly data available yet. Run AVS reports to build history.")
         st.stop()
 
-    # --- Filter controls ---
-    col_filter1, col_filter2, col_filter3 = st.columns(3)
-    with col_filter1:
+    # --- Load all data up front for filter options ---
+    all_locks = _cached_all_locks()
+
+    # --- Period filter ---
+    col_period, col_period_val = st.columns(2)
+    with col_period:
         period_filter = st.selectbox("View by", ["All Weeks", "Month", "Quarter", "Year"], key="perf_period")
-    with col_filter2:
+    with col_period_val:
         if period_filter == "Month":
             months_available = sorted(set((w.year, w.month) for w in locked_weeks))
             month_labels = [f"{y}-{m:02d}" for y, m in months_available]
@@ -575,64 +887,364 @@ elif page == "Performance Review":
             filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
         else:
             filtered_weeks = locked_weeks
-    with col_filter3:
-        group_by = st.selectbox("Group by", ["Store", "DM", "Revenue Band"], key="perf_group")
 
     if not filtered_weeks:
         st.warning("No data for the selected period.")
         st.stop()
 
-    # --- Build performance data from locked weeks ---
-    from weekly_lock import load_all_locks
-    all_locks = load_all_locks()
+    # --- Filter by Store and DM ---
     week_strs = [str(w) for w in filtered_weeks]
     perf_data = all_locks[all_locks["week_start"].isin(week_strs)].copy()
     perf_data["hourly_goal"] = pd.to_numeric(perf_data["hourly_goal"], errors="coerce").fillna(0)
 
-    st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} to {format_week_label(filtered_weeks[-1])}")
-    st.caption(f"{len(filtered_weeks)} week(s) selected")
+    col_dm_filter, col_store_filter = st.columns(2)
+    with col_dm_filter:
+        dm_list = sorted(perf_data["dm"].dropna().unique().tolist())
+        selected_dms = st.multiselect("Filter by DM", dm_list, default=[], key="perf_dm_filter")
+    with col_store_filter:
+        # If DMs are selected, only show stores for those DMs
+        store_pool = perf_data if not selected_dms else perf_data[perf_data["dm"].isin(selected_dms)]
+        store_list = sorted(store_pool["store_name"].dropna().unique().tolist())
+        selected_stores = st.multiselect("Filter by Store", store_list, default=[], key="perf_store_filter")
 
-    if group_by == "Store":
-        # Pivot: rows = stores, columns = weeks
-        pivot = perf_data.pivot_table(
-            index=["location_id", "store_name"],
+    # Apply filters
+    if selected_dms:
+        perf_data = perf_data[perf_data["dm"].isin(selected_dms)]
+    if selected_stores:
+        perf_data = perf_data[perf_data["store_name"].isin(selected_stores)]
+
+    if perf_data.empty:
+        st.warning("No data matches the selected filters.")
+        st.stop()
+
+    st.divider()
+    st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} → {format_week_label(filtered_weeks[-1])}")
+    st.caption(f"{len(filtered_weeks)} week(s)  ·  {perf_data['store_name'].nunique()} store(s)")
+
+    # --- Load actuals and merge with lock data ---
+    actuals = _cached_weekly_actuals()
+    week_strs_set = set(week_strs)
+
+    # Merge lock data (store_name, dm) with actuals (actual_hours, variance)
+    if not actuals.empty:
+        actuals_filtered = actuals[actuals["week_start"].isin(week_strs_set)].copy()
+    else:
+        actuals_filtered = pd.DataFrame(columns=["week_start", "location_id", "actual_hours", "variance"])
+
+    # Build variance pivot: stores as rows, weeks as columns
+    # Use lock data for store list, actuals for values
+    store_info = perf_data[["location_id", "store_name"]].drop_duplicates()
+
+    # Merge actuals with store names
+    if not actuals_filtered.empty:
+        display_data = actuals_filtered.merge(store_info, on="location_id", how="inner")
+    else:
+        # No actuals yet — show all stores with 0
+        display_data = perf_data[["week_start", "location_id", "store_name"]].copy()
+        display_data["variance"] = 0
+
+    # Pivot variance by store x week
+    if not display_data.empty and "variance" in display_data.columns:
+        pivot = display_data.pivot_table(
+            index="store_name",
             columns="week_start",
-            values="hourly_goal",
+            values="variance",
             aggfunc="first",
-        ).reset_index()
-        pivot.columns.name = None
-        display = pivot.rename(columns={"location_id": "Store #", "store_name": "Store Name"})
-        display = display.sort_values("Store #").reset_index(drop=True)
-        st.dataframe(display, use_container_width=True, height=500)
+        ).fillna(0).reset_index()
+    else:
+        pivot = pd.DataFrame({"store_name": store_info["store_name"].unique()})
+        for ws in week_strs:
+            pivot[ws] = 0
+        pivot = pivot.reset_index(drop=True)
 
-    elif group_by == "DM":
-        dm_summary = perf_data.groupby(["week_start", "dm"]).agg(
-            total_goal=("hourly_goal", "sum"),
-            store_count=("location_id", "count"),
-        ).reset_index()
-        pivot = dm_summary.pivot_table(
-            index="dm", columns="week_start", values="total_goal", aggfunc="first"
-        ).reset_index()
-        pivot.columns.name = None
-        pivot = pivot.rename(columns={"dm": "DM"}).sort_values("DM")
-        st.dataframe(pivot, use_container_width=True, height=400)
+    pivot.columns.name = None
+    pivot = pivot.rename(columns={"store_name": "Store"})
+    week_cols = [c for c in pivot.columns if c != "Store"]
 
-    elif group_by == "Revenue Band":
-        band_summary = perf_data.groupby(["week_start", "revenue_band"]).agg(
-            avg_goal=("hourly_goal", "mean"),
-            store_count=("location_id", "count"),
-        ).reset_index()
-        pivot = band_summary.pivot_table(
-            index="revenue_band", columns="week_start", values="avg_goal", aggfunc="first"
-        ).reset_index()
-        pivot.columns.name = None
-        pivot = pivot.rename(columns={"revenue_band": "Revenue Band"})
-        st.dataframe(pivot, use_container_width=True, height=400)
+    # Round to whole numbers
+    for wc in week_cols:
+        pivot[wc] = pivot[wc].round(0).astype(int)
+
+    # --- Ranking: closest to goal (absolute variance) ranked first ---
+    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).abs().mean(axis=1).fillna(0)
+    pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
+    pivot.insert(0, "Rank", range(1, len(pivot) + 1))
+    pivot = pivot.drop(columns=["_sort_var"])
+
+    # Rename week columns to end date (Wednesday) labels
+    week_col_map = {}
+    for col in week_cols:
+        try:
+            d = date.fromisoformat(col)
+            end_d = d + timedelta(days=6)
+            week_col_map[col] = f"Wk {end_d.month}/{end_d.day}"
+        except (ValueError, TypeError):
+            pass
+    pivot = pivot.rename(columns=week_col_map)
+    renamed_week_cols = [week_col_map.get(c, c) for c in week_cols]
+
+    # --- Color coding: variance-based ---
+    # 0 with no actuals = no color | Within ±30 hrs = light green | Off by 30+ = light red
+    has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
+
+    def color_cells(row):
+        styles = [""] * len(row)
+        for i, col in enumerate(row.index):
+            if col in ("Rank", "Store"):
+                continue
+            variance = row[col]
+            # Find original week_start for this column
+            orig_week = next((k for k, v in week_col_map.items() if v == col), None)
+            if orig_week not in has_actuals_weeks:
+                styles[i] = ""  # no actuals for this week
+            elif abs(variance) > 30:
+                styles[i] = "background-color: #ffcccc"  # light red
+            else:
+                styles[i] = "background-color: #ccffcc"  # light green
+        return styles
+
+    styled = pivot.style.apply(color_cells, axis=1)
+
+    # Display all rows — no internal scroll, user scrolls the browser
+    st.dataframe(
+        styled,
+        use_container_width=False,
+        hide_index=True,
+        height=(len(pivot) + 1) * 35 + 3,
+    )
 
     st.info(
         "This page currently shows the locked hourly goals per week. "
         "Once you start running AVS reports, actual labor hours will also be "
         "captured here for Goal vs Actual comparison."
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: AVS Performance - DMs
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "AVS Performance - DMs":
+    st.title("AVS Performance - DMs")
+    st.caption("Summarized DM performance across all their stores by week.")
+
+    locked_weeks = get_locked_weeks()
+    if not locked_weeks:
+        st.info("No weekly data available yet. Run AVS reports to build history.")
+        st.stop()
+
+    # --- Load all data up front for filter options ---
+    all_locks = _cached_all_locks()
+
+    # --- Period filter ---
+    col_period, col_period_val = st.columns(2)
+    with col_period:
+        period_filter = st.selectbox("View by", ["All Weeks", "Month", "Quarter", "Year"], key="dm_perf_period")
+    with col_period_val:
+        if period_filter == "Month":
+            months_available = sorted(set((w.year, w.month) for w in locked_weeks))
+            month_labels = [f"{y}-{m:02d}" for y, m in months_available]
+            selected_month = st.selectbox("Select Month", month_labels, key="dm_perf_month")
+            sel_year, sel_month = int(selected_month[:4]), int(selected_month[5:])
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month == sel_month]
+        elif period_filter == "Quarter":
+            quarters_available = sorted(set((w.year, (w.month - 1) // 3 + 1) for w in locked_weeks))
+            quarter_labels = [f"{y} Q{q}" for y, q in quarters_available]
+            selected_quarter = st.selectbox("Select Quarter", quarter_labels, key="dm_perf_quarter")
+            sel_year = int(selected_quarter[:4])
+            sel_q = int(selected_quarter[-1])
+            q_months = [(sel_q - 1) * 3 + 1, (sel_q - 1) * 3 + 2, (sel_q - 1) * 3 + 3]
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month in q_months]
+        elif period_filter == "Year":
+            years_available = sorted(set(w.year for w in locked_weeks))
+            selected_year = st.selectbox("Select Year", years_available, key="dm_perf_year")
+            filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
+        else:
+            filtered_weeks = locked_weeks
+
+    if not filtered_weeks:
+        st.warning("No data for the selected period.")
+        st.stop()
+
+    # --- Filter by DM ---
+    week_strs = [str(w) for w in filtered_weeks]
+    perf_data = all_locks[all_locks["week_start"].isin(week_strs)].copy()
+    perf_data["hourly_goal"] = pd.to_numeric(perf_data["hourly_goal"], errors="coerce").fillna(0)
+
+    dm_list = sorted(perf_data["dm"].dropna().unique().tolist())
+    selected_dms = st.multiselect("Filter by DM", dm_list, default=[], key="dm_perf_dm_filter")
+
+    if selected_dms:
+        perf_data = perf_data[perf_data["dm"].isin(selected_dms)]
+
+    if perf_data.empty:
+        st.warning("No data matches the selected filters.")
+        st.stop()
+
+    st.divider()
+    st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} → {format_week_label(filtered_weeks[-1])}")
+    st.caption(f"{len(filtered_weeks)} week(s)  ·  {perf_data['dm'].nunique()} DM(s)  ·  {perf_data['store_name'].nunique()} store(s)")
+
+    # --- Load actuals and summarize by DM ---
+    actuals = _cached_weekly_actuals()
+    week_strs_set = set(week_strs)
+
+    if not actuals.empty:
+        actuals_filtered = actuals[actuals["week_start"].isin(week_strs_set)].copy()
+    else:
+        actuals_filtered = pd.DataFrame(columns=["week_start", "location_id", "variance"])
+
+    # Get DM mapping from lock data
+    store_dm = perf_data[["location_id", "dm"]].drop_duplicates()
+
+    # Merge actuals with DM info and sum variance by DM per week
+    if not actuals_filtered.empty:
+        dm_actuals = actuals_filtered.merge(store_dm, on="location_id", how="inner")
+        dm_summary = dm_actuals.groupby(["dm", "week_start"]).agg(
+            total_variance=("variance", "sum"),
+        ).reset_index()
+    else:
+        dm_summary = pd.DataFrame(columns=["dm", "week_start", "total_variance"])
+
+    # Add store count per DM
+    dm_store_counts = perf_data.groupby("dm")["store_name"].nunique().reset_index()
+    dm_store_counts.columns = ["DM", "Stores"]
+
+    # Pivot: DMs as rows, weeks as columns
+    if not dm_summary.empty:
+        pivot = dm_summary.pivot_table(
+            index="dm",
+            columns="week_start",
+            values="total_variance",
+            aggfunc="first",
+        ).fillna(0).reset_index()
+    else:
+        dms = sorted(perf_data["dm"].dropna().unique())
+        pivot = pd.DataFrame({"dm": dms})
+        for ws in week_strs:
+            pivot[ws] = 0
+
+    pivot.columns.name = None
+    pivot = pivot.rename(columns={"dm": "DM"})
+    pivot = pivot.merge(dm_store_counts, on="DM", how="left")
+
+    # Move Stores column to second position
+    cols = pivot.columns.tolist()
+    cols.remove("Stores")
+    cols.insert(1, "Stores")
+    pivot = pivot[cols]
+
+    week_cols = [c for c in pivot.columns if c not in ("DM", "Stores")]
+
+    # Round to whole numbers
+    for wc in week_cols:
+        pivot[wc] = pivot[wc].round(0).astype(int)
+
+    # --- Ranking: closest to goal (absolute variance) ranked first ---
+    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).abs().mean(axis=1).fillna(0)
+    pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
+    pivot.insert(0, "Rank", range(1, len(pivot) + 1))
+    pivot = pivot.drop(columns=["_sort_var"])
+
+    # Rename week columns
+    week_col_map = {}
+    for col in week_cols:
+        try:
+            d = date.fromisoformat(col)
+            end_d = d + timedelta(days=6)
+            week_col_map[col] = f"Wk {end_d.month}/{end_d.day}"
+        except (ValueError, TypeError):
+            pass
+    pivot = pivot.rename(columns=week_col_map)
+
+    # --- Color coding ---
+    has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
+
+    def color_dm_cells(row):
+        styles = [""] * len(row)
+        for i, col in enumerate(row.index):
+            if col in ("Rank", "DM", "Stores"):
+                continue
+            variance = row[col]
+            orig_week = next((k for k, v in week_col_map.items() if v == col), None)
+            if orig_week not in has_actuals_weeks:
+                styles[i] = ""
+            elif abs(variance) > 30:
+                styles[i] = "background-color: #ffcccc"
+            else:
+                styles[i] = "background-color: #ccffcc"
+        return styles
+
+    styled = pivot.style.apply(color_dm_cells, axis=1)
+
+    st.dataframe(
+        styled,
+        use_container_width=False,
+        hide_index=True,
+        height=(len(pivot) + 1) * 35 + 3,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: GM Hot Streak
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "GM Hot Streak":
+    st.title("🔥 GM Hot Streak")
+    st.caption("Stores that have hit their goal 2 or more consecutive weeks. A store hits its goal when actual hours are within 30 hours of the target.")
+
+    actuals = _cached_weekly_actuals()
+    if actuals.empty:
+        st.info("No actuals data yet. Run AVS Weekly Reports to build history.")
+        st.stop()
+
+    all_locks = _cached_all_locks()
+
+    # Get store info (name, DM) from locks
+    store_info = all_locks[["location_id", "store_name", "dm"]].drop_duplicates()
+    store_info = store_info.drop_duplicates(subset="location_id", keep="last")
+
+    # Get all weeks with actuals, sorted chronologically
+    sorted_weeks = sorted(actuals["week_start"].unique().tolist())
+    stores = actuals["location_id"].unique().tolist()
+
+    # Calculate current streak for each store
+    streak_data = []
+    for store_id in stores:
+        store_actuals = actuals[actuals["location_id"] == store_id].copy()
+        streak = 0
+        for week_str in reversed(sorted_weeks):
+            week_row = store_actuals[store_actuals["week_start"] == week_str]
+            if week_row.empty:
+                break
+            variance = abs(week_row["variance"].values[0])
+            if variance <= 30:
+                streak += 1
+            else:
+                break
+        if streak >= 2:
+            info = store_info[store_info["location_id"] == store_id]
+            store_name = info["store_name"].values[0] if len(info) > 0 else store_id
+            dm_name = info["dm"].values[0] if len(info) > 0 else ""
+            streak_data.append({"Store": store_name, "DM": dm_name, "Streak (Weeks)": streak})
+
+    if not streak_data:
+        st.info("No stores are currently on a streak (2+ consecutive weeks hitting their goal).")
+    else:
+        streak_df = pd.DataFrame(streak_data)
+        streak_df = streak_df.sort_values("Streak (Weeks)", ascending=False).reset_index(drop=True)
+        streak_df.insert(0, "Rank", range(1, len(streak_df) + 1))
+
+        st.metric("Stores on a Streak", len(streak_df))
+
+        st.dataframe(
+            streak_df,
+            use_container_width=False,
+            hide_index=True,
+            height=(len(streak_df) + 1) * 35 + 3,
+        )
+
+    st.info(
+        "A streak means hitting the goal (within 30 hours) for 2+ consecutive weeks. "
+        "Streaks are counted backwards from the most recent week."
     )
 
 
@@ -643,12 +1255,10 @@ elif page == "Manage Stores":
     st.title("Manage Store Locations")
     st.caption("Add or remove stores from the master locations list.")
 
-    if LOCATIONS_PATH.exists():
-        stores_df = pd.read_csv(LOCATIONS_PATH, sep="|", dtype=str)
+    stores_df = load_stores()
+    if not stores_df.empty:
         stores_df["location_id"] = stores_df["location_id"].str.strip().str.upper()
         stores_df["store_name"] = stores_df["store_name"].str.strip()
-    else:
-        stores_df = pd.DataFrame(columns=["location_id", "store_name"])
 
     st.subheader(f"Current Stores ({len(stores_df)})")
     if not stores_df.empty:
@@ -680,27 +1290,18 @@ elif page == "Manage Stores":
         elif new_id_clean in stores_df["location_id"].values:
             st.error(f"Store {new_id_clean} already exists.")
         else:
-            new_row = pd.DataFrame([{"location_id": new_id_clean, "store_name": new_name_clean}])
-            updated_df = pd.concat([stores_df, new_row], ignore_index=True)
-            updated_df = updated_df.sort_values("location_id").reset_index(drop=True)
-            updated_df.to_csv(LOCATIONS_PATH, sep="|", index=False)
+            save_store(new_id_clean, new_name_clean)
 
-            # Also add to reference_data.csv with defaults
-            if REFERENCE_DATA_PATH.exists():
-                ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
-                if new_id_clean not in ref_df["location_id"].values:
-                    dm_list = load_dm_list()
-                    new_ref = pd.DataFrame([{
-                        "location_id": new_id_clean,
-                        "store_name": new_name_clean,
-                        "dm": dm_list[0] if dm_list else "",
-                        "revenue_band": "<25k",
-                    }])
-                    ref_df = pd.concat([ref_df, new_ref], ignore_index=True)
-                    ref_df = ref_df.sort_values("location_id").reset_index(drop=True)
-                    ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
+            # Also add to reference_data with defaults
+            dm_list = _cached_dm_list()
+            save_reference_data_row(
+                new_id_clean, new_name_clean,
+                dm_list[0] if dm_list else "",
+                "<25k",
+            )
 
             st.success(f"Added store {new_id_clean} — {new_name_clean}")
+            st.cache_data.clear()
             st.rerun()
 
     st.divider()
@@ -714,16 +1315,11 @@ elif page == "Manage Stores":
             remove_id = selected.split("  —  ")[0].strip()
             st.warning(f"This will remove **{selected}** from the master list.")
             if st.button("Confirm Remove", type="primary"):
-                updated_df = stores_df[stores_df["location_id"] != remove_id].copy()
-                updated_df.to_csv(LOCATIONS_PATH, sep="|", index=False)
-
-                # Also remove from reference_data.csv
-                if REFERENCE_DATA_PATH.exists():
-                    ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
-                    ref_df = ref_df[ref_df["location_id"] != remove_id]
-                    ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
+                delete_store(remove_id)
+                delete_reference_data(remove_id)
 
                 st.success(f"Removed store {remove_id}")
+                st.cache_data.clear()
                 st.rerun()
     else:
         st.info("No stores to remove.")
@@ -734,54 +1330,274 @@ elif page == "Manage Stores":
 # ═══════════════════════════════════════════════════════════════════════════════
 elif page == "Store Revenue Bands":
     st.title("Store Revenue Bands")
-    st.caption("Assign a revenue band to each store. Changes apply to the next unlocked week.")
+    st.caption("Assign revenue bands per store for current and future weeks. Lock weeks to freeze their config.")
 
-    show_week_deadline_banner()
-
-    if not REFERENCE_DATA_PATH.exists():
-        st.error("Reference data file not found. Please add stores first.")
+    ref_df = _cached_reference_data()
+    if ref_df.empty:
+        st.error("No reference data found. Please add stores first.")
         st.stop()
 
-    ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
     ref_df = ref_df.sort_values("location_id").reset_index(drop=True)
+    band_goals = _cached_band_goals()
 
-    # Load band goals for the info display
-    band_goals = load_band_goals()
+    # Build 5-week range: current + 4 future
+    current_week = get_week_start()
+    weeks = [current_week + timedelta(days=7 * i) for i in range(5)]
+    week_labels = [format_week_label(w) for w in weeks]
+    week_statuses = [get_week_status(w) for w in weeks]
 
-    st.info("Each revenue band maps to an hourly goal. You can edit the goals on the **Hourly Goals** page.")
+    # Load existing data for each week (locked, draft, or None)
+    week_data = {}
+    for w, status in zip(weeks, week_statuses):
+        if status == "locked":
+            cfg = load_locked_config(w)
+            week_data[str(w)] = {r["location_id"]: r["revenue_band"] for _, r in cfg.iterrows()} if cfg is not None else {}
+        elif status == "draft":
+            cfg = load_draft_config(w)
+            week_data[str(w)] = {r["location_id"]: r["revenue_band"] for _, r in cfg.iterrows()} if cfg is not None else {}
+        else:
+            week_data[str(w)] = {}
 
-    # Build the form with dropdowns for each store
-    st.subheader(f"Assign Bands ({len(ref_df)} stores)")
+    # --- Header row with status badges ---
+    st.markdown("""<style>
+    .week-locked { color: #fff; background: #2B3A4E; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+    .week-draft { color: #2B3A4E; background: #C49A5C; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+    .week-open { color: #666; background: #eee; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+    </style>""", unsafe_allow_html=True)
 
-    with st.form("revenue_bands_form"):
-        new_bands = {}
-        for idx, row in ref_df.iterrows():
+    header_cols = st.columns([2, 3] + [2] * 5)
+    with header_cols[0]:
+        st.markdown("**Store #**")
+    with header_cols[1]:
+        st.markdown("**Store Name**")
+    for i, (w, label, status) in enumerate(zip(weeks, week_labels, week_statuses)):
+        with header_cols[i + 2]:
+            if w == current_week:
+                st.markdown(f"**{label}**<br><span class='week-locked'>Current</span>", unsafe_allow_html=True)
+            elif status == "locked":
+                st.markdown(f"**{label}**<br><span class='week-locked'>Locked</span>", unsafe_allow_html=True)
+            elif status == "draft":
+                st.markdown(f"**{label}**<br><span class='week-draft'>Draft</span>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"**{label}**<br><span class='week-open'>Open</span>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # --- Grid form ---
+    with st.form("revenue_bands_grid"):
+        grid_data = {str(w): {} for w in weeks}
+
+        for _, row in ref_df.iterrows():
+            store_id = row["location_id"]
+            store_name = row["store_name"]
             current_band = row["revenue_band"] if pd.notna(row["revenue_band"]) else "<25k"
-            current_idx = BAND_OPTIONS.index(current_band) if current_band in BAND_OPTIONS else 0
-            goal_str = f"({band_goals.get(current_band, '?')} hrs)" if current_band in band_goals else ""
 
-            col1, col2, col3 = st.columns([2, 3, 3])
-            with col1:
-                st.text(row["location_id"])
-            with col2:
-                st.text(row["store_name"])
-            with col3:
-                new_bands[row["location_id"]] = st.selectbox(
-                    f"Band for {row['location_id']}",
-                    BAND_OPTIONS,
-                    index=current_idx,
-                    key=f"band_{row['location_id']}",
-                    label_visibility="collapsed",
-                )
+            cols = st.columns([2, 3] + [2] * 5)
+            with cols[0]:
+                st.text(store_id)
+            with cols[1]:
+                st.text(store_name)
 
-        save_btn = st.form_submit_button("Save Changes", type="primary", use_container_width=True)
+            for i, (w, status) in enumerate(zip(weeks, week_statuses)):
+                w_str = str(w)
+                # Get band for this week: from DB if exists, else from current config
+                existing_band = week_data[w_str].get(store_id, current_band)
+                band_idx = BAND_OPTIONS.index(existing_band) if existing_band in BAND_OPTIONS else 0
 
-    if save_btn:
-        for store_id, band in new_bands.items():
-            ref_df.loc[ref_df["location_id"] == store_id, "revenue_band"] = band
-        ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
-        st.success("Revenue bands saved! These will apply to the next unlocked week.")
+                with cols[i + 2]:
+                    if status == "locked" or w == current_week:
+                        st.text(existing_band)
+                        grid_data[w_str][store_id] = existing_band
+                    else:
+                        grid_data[w_str][store_id] = st.selectbox(
+                            f"Band {store_id} {w_str}",
+                            BAND_OPTIONS,
+                            index=band_idx,
+                            key=f"band_{store_id}_{w_str}",
+                            label_visibility="collapsed",
+                        )
+
+        st.divider()
+
+        # Action buttons row
+        btn_cols = st.columns([2, 3] + [2] * 5)
+        with btn_cols[0]:
+            save_drafts_btn = st.form_submit_button("Save All Drafts", type="primary")
+
+    # Handle save
+    if save_drafts_btn:
+        for w, status in zip(weeks, week_statuses):
+            # Skip current week and already-locked weeks
+            if w == current_week or status == "locked":
+                continue
+            w_str = str(w)
+            save_draft_bands(w, grid_data[w_str], ref_df, band_goals)
+        st.success("Drafts saved for future weeks!")
+        st.cache_data.clear()
         st.rerun()
+
+    # Lock buttons (outside form since forms can only have one submit)
+    st.subheader("Lock a Week")
+    st.caption("Locking a week freezes its bands. Once locked, changes require admin override.")
+    lock_cols = st.columns(5)
+    for i, (w, label, status) in enumerate(zip(weeks, week_labels, week_statuses)):
+        with lock_cols[i]:
+            if status == "locked":
+                st.success(f"{label}: Locked")
+            elif status == "draft":
+                if st.button(f"Lock {label}", key=f"lock_btn_{w}"):
+                    lock_drafts(w)
+                    log_change(
+                        user_email=st.experimental_user.email if hasattr(st, "experimental_user") and st.experimental_user else "admin",
+                        week_start=w,
+                        location_id="ALL",
+                        field_changed="week_lock",
+                        old_value="draft",
+                        new_value="locked",
+                        action="manual-lock",
+                    )
+                    st.success(f"Locked {label}!")
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.info(f"{label}: Save drafts first")
+
+    # --- Export to Excel ---
+    st.divider()
+    st.subheader("Export to Excel")
+    st.caption("Export store config (Store #, Store Name, Revenue Band, Hourly Goal) for selected weeks.")
+
+    export_options = []
+    for w, label, status in zip(weeks, week_labels, week_statuses):
+        if status in ("locked", "draft"):
+            export_options.append((w, label, status))
+
+    if not export_options:
+        st.info("No locked or drafted weeks available to export.")
+    else:
+        export_choices = [f"{label} ({status})" for _, label, status in export_options]
+        selected_exports = st.multiselect(
+            "Select weeks to export",
+            export_choices,
+            default=[export_choices[0]] if export_choices else [],
+            key="rev_band_export_select",
+        )
+
+        if st.button("Export to Excel", key="rev_band_export_btn", type="primary"):
+            if not selected_exports:
+                st.warning("Please select at least one week.")
+            else:
+                from openpyxl import Workbook
+                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+                wb = Workbook()
+                wb.remove(wb.active)
+
+                NAVY = "2B3A4E"
+                GOLD = "C49A5C"
+                GOLD_LIGHT = "F5F0EB"
+                WHITE = "FFFFFF"
+                GRAY_BG = "F7F7F7"
+
+                header_font = Font(name="Calibri", bold=True, color=WHITE, size=11)
+                header_fill = PatternFill("solid", fgColor=NAVY)
+                subheader_font = Font(name="Calibri", bold=True, color=NAVY, size=10)
+                data_font = Font(name="Calibri", size=10)
+                center = Alignment(horizontal="center", vertical="center")
+                left = Alignment(horizontal="left", vertical="center")
+                thin_border = Border(
+                    left=Side(style="thin", color="CCCCCC"),
+                    right=Side(style="thin", color="CCCCCC"),
+                    top=Side(style="thin", color="CCCCCC"),
+                    bottom=Side(style="thin", color="CCCCCC"),
+                )
+                stripe_fill = PatternFill("solid", fgColor=GRAY_BG)
+
+                for choice in selected_exports:
+                    idx = export_choices.index(choice)
+                    w, label, status = export_options[idx]
+
+                    if status == "locked":
+                        cfg = load_locked_config(w)
+                    else:
+                        cfg = load_draft_config(w)
+
+                    if cfg is None or cfg.empty:
+                        continue
+
+                    # Build data with hourly goals
+                    cfg = cfg.sort_values("location_id").reset_index(drop=True)
+
+                    # Sheet name (max 31 chars for Excel)
+                    sheet_name = label.replace(" – ", "-").replace("/", "-")[:31]
+                    ws = wb.create_sheet(title=sheet_name)
+
+                    # Title row
+                    ws.merge_cells("A1:D1")
+                    title_cell = ws["A1"]
+                    title_cell.value = f"Ram-Z Restaurant Group — Store Config: {label}"
+                    title_cell.font = Font(name="Calibri", bold=True, color=NAVY, size=14)
+                    title_cell.alignment = left
+
+                    # Status row
+                    ws.merge_cells("A2:D2")
+                    status_cell = ws["A2"]
+                    status_cell.value = f"Status: {status.upper()}"
+                    status_cell.font = Font(name="Calibri", bold=True, color=GOLD[0:6], size=10)
+
+                    # Headers
+                    headers = ["Store #", "Store Name", "Revenue Band", "Hourly Goal"]
+                    for col_idx, h in enumerate(headers, 1):
+                        cell = ws.cell(row=4, column=col_idx, value=h)
+                        cell.font = header_font
+                        cell.fill = header_fill
+                        cell.alignment = center
+                        cell.border = thin_border
+
+                    # Data rows
+                    for row_idx, (_, r) in enumerate(cfg.iterrows(), 5):
+                        values = [
+                            r.get("location_id", ""),
+                            r.get("store_name", ""),
+                            r.get("revenue_band", ""),
+                            float(r.get("hourly_goal", 0)) if pd.notna(r.get("hourly_goal")) else 0,
+                        ]
+                        for col_idx, val in enumerate(values, 1):
+                            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                            cell.font = data_font
+                            cell.border = thin_border
+                            if col_idx in (1, 3, 4):
+                                cell.alignment = center
+                            else:
+                                cell.alignment = left
+                            if row_idx % 2 == 1:
+                                cell.fill = stripe_fill
+                            # Format hourly goal as integer
+                            if col_idx == 4:
+                                cell.number_format = "#,##0"
+
+                    # Auto-fit column widths
+                    for col_idx in range(1, 5):
+                        max_len = len(headers[col_idx - 1])
+                        for row_idx in range(5, 5 + len(cfg)):
+                            val = ws.cell(row=row_idx, column=col_idx).value
+                            if val:
+                                max_len = max(max_len, len(str(val)))
+                        ws.column_dimensions[chr(64 + col_idx)].width = max_len + 3
+
+                buf = BytesIO()
+                wb.save(buf)
+                buf.seek(0)
+
+                week_count = len(selected_exports)
+                filename = f"RamZ_Store_Config_{'_'.join(str(export_options[export_choices.index(c)][0].strftime('%m%d')) for c in selected_exports)}.xlsx"
+                st.download_button(
+                    label=f"Download ({week_count} week{'s' if week_count > 1 else ''})",
+                    data=buf,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rev_band_download",
+                )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -795,7 +1611,7 @@ elif page == "DM Assignments":
 
     # --- DM List Management ---
     st.subheader("DM List")
-    dm_list = load_dm_list()
+    dm_list = _cached_dm_list()
     st.write("Current DMs: " + ", ".join(dm_list) if dm_list else "No DMs defined.")
 
     col1, col2 = st.columns(2)
@@ -808,10 +1624,9 @@ elif page == "DM Assignments":
             if dm_name in dm_list:
                 st.error(f"{dm_name} already exists.")
             else:
-                dm_list.append(dm_name)
-                dm_list.sort()
-                pd.DataFrame({"dm_name": dm_list}).to_csv(DM_LIST_PATH, index=False)
+                add_dm(dm_name)
                 st.success(f"Added DM: {dm_name}")
+                st.cache_data.clear()
                 st.rerun()
 
     with col2:
@@ -820,9 +1635,9 @@ elif page == "DM Assignments":
                 remove_dm = st.selectbox("Remove DM", dm_list, index=None, placeholder="Choose a DM...")
                 remove_dm_btn = st.form_submit_button("Remove DM")
             if remove_dm_btn and remove_dm:
-                dm_list.remove(remove_dm)
-                pd.DataFrame({"dm_name": dm_list}).to_csv(DM_LIST_PATH, index=False)
+                db_remove_dm(remove_dm)
                 st.success(f"Removed DM: {remove_dm}")
+                st.cache_data.clear()
                 st.rerun()
 
     st.divider()
@@ -830,13 +1645,13 @@ elif page == "DM Assignments":
     # --- Store-to-DM Assignment ---
     st.subheader("Store-to-DM Assignments")
 
-    if not REFERENCE_DATA_PATH.exists():
-        st.error("Reference data file not found.")
+    ref_df = _cached_reference_data()
+    if ref_df.empty:
+        st.error("No reference data found.")
         st.stop()
 
-    ref_df = pd.read_csv(REFERENCE_DATA_PATH, sep="|", dtype=str)
     ref_df = ref_df.sort_values("location_id").reset_index(drop=True)
-    dm_list = load_dm_list()
+    dm_list = _cached_dm_list()
 
     if not dm_list:
         st.warning("No DMs defined. Add DMs above first.")
@@ -867,8 +1682,9 @@ elif page == "DM Assignments":
     if save_btn:
         for store_id, dm in new_dms.items():
             ref_df.loc[ref_df["location_id"] == store_id, "dm"] = dm
-        ref_df.to_csv(REFERENCE_DATA_PATH, sep="|", index=False)
+        save_reference_data_bulk(ref_df)
         st.success("DM assignments saved! These will apply to the next unlocked week.")
+        st.cache_data.clear()
         st.rerun()
 
 
@@ -881,7 +1697,7 @@ elif page == "Hourly Goals":
 
     show_week_deadline_banner()
 
-    band_goals = load_band_goals()
+    band_goals = _cached_band_goals()
 
     with st.form("hourly_goals_form"):
         new_goals = {}
@@ -904,12 +1720,9 @@ elif page == "Hourly Goals":
         save_btn = st.form_submit_button("Save Changes", type="primary", use_container_width=True)
 
     if save_btn:
-        goals_df = pd.DataFrame([
-            {"revenue_band": band, "hourly_goal": goal}
-            for band, goal in new_goals.items()
-        ])
-        goals_df.to_csv(BAND_GOALS_PATH, sep="|", index=False)
+        save_band_goals(new_goals)
         st.success("Hourly goals saved! These will apply to the next unlocked week.")
+        st.cache_data.clear()
         st.rerun()
 
 
@@ -943,11 +1756,11 @@ elif page == "Weekly Config":
         st.error("Could not load locked config for this week.")
         st.stop()
 
-    st.subheader(f"Locked Config: {week_labels[selected_week]}")
+    week_status = get_week_status(selected_week)
+    st.subheader(f"Config: {week_labels[selected_week]}  ({week_status or 'unknown'})")
 
     # Show source info
-    from weekly_lock import load_all_locks
-    all_locks = load_all_locks()
+    all_locks = _cached_all_locks()
     week_data = all_locks[all_locks["week_start"] == str(selected_week)]
     sources = week_data["source"].unique().tolist() if "source" in week_data.columns else []
     if sources:
@@ -982,7 +1795,7 @@ elif page == "Weekly Config":
         elif override_field == "hourly_goal":
             override_value = st.number_input("New Value", min_value=0, max_value=9999, step=1)
         else:
-            dm_list = load_dm_list()
+            dm_list = _cached_dm_list()
             override_value = st.selectbox("New Value", dm_list if dm_list else [""])
 
         override_btn = st.form_submit_button("Apply Override", type="primary")
@@ -998,9 +1811,31 @@ elif page == "Weekly Config":
                     override_value, current_user or "admin"
                 )
                 st.success(f"Override applied: {store_id} {override_field} = {override_value}")
+                st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
+
+    # Delete week lock
+    st.divider()
+    st.subheader("Delete Week Lock")
+    st.caption("Remove the entire lock for this week. This allows the report to be re-run with fresh data.")
+    st.warning(f"This will delete the locked config for **{week_labels[selected_week]}** and all associated data.")
+    if st.button("Delete This Week's Lock", type="primary"):
+        delete_week_lock(selected_week)
+        delete_weekly_actuals(selected_week)
+        log_change(
+            user_email=current_user or "admin",
+            week_start=selected_week,
+            location_id="ALL",
+            field_changed="week_lock",
+            old_value=str(selected_week),
+            new_value="deleted",
+            action="admin-delete",
+        )
+        st.success(f"Lock deleted for {week_labels[selected_week]}. You can now re-run the report.")
+        st.cache_data.clear()
+        st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1098,6 +1933,7 @@ elif page == "Admin Users":
             else:
                 add_admin(email_clean)
                 st.success(f"Added admin: {email_clean}")
+                st.cache_data.clear()
                 st.rerun()
 
     with col2:
@@ -1113,6 +1949,7 @@ elif page == "Admin Users":
                 else:
                     remove_admin(remove_email)
                     st.success(f"Removed admin: {remove_email}")
+                    st.cache_data.clear()
                     st.rerun()
         else:
             st.info("Cannot remove the last admin.")
