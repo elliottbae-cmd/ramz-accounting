@@ -25,24 +25,22 @@ sys.path.insert(0, str(_LABOR_DIR))
 from reconcile import (
     load_locations, load_fz_schedule, detect_bank_date,
     load_bank_data, reconcile, generate_invoices, write_report,
-    HELPDESK_FEE_WEEKLY,
 )
 from avs_engine import (
-    load_reference_data, load_band_goals, load_dm_list,
     generate_weekly_report, generate_midweek_report,
 )
 from weekly_lock import (
-    get_week_start, get_week_end, get_next_week_start, format_week_label,
-    load_locked_config, lock_exists, create_lock,
-    ensure_current_week_locked, override_locked_value, get_locked_weeks,
-    load_change_log, is_admin, load_admin_users, add_admin, remove_admin,
+    get_week_start, get_next_week_start, format_week_label,
+    ensure_current_week_locked, override_locked_value,
 )
 from supabase_db import (
     load_stores, save_store, delete_store,
+    load_reference_data, load_band_goals, load_dm_list,
     save_reference_data_row, save_reference_data_bulk, delete_reference_data,
-    save_band_goals, load_band_goals as load_band_goals_db,
-    add_dm, remove_dm as db_remove_dm,
+    save_band_goals, add_dm, remove_dm as db_remove_dm,
     load_all_locks, delete_week_lock, log_change,
+    load_locked_config, lock_exists, create_lock, get_locked_weeks,
+    load_change_log, is_admin, load_admin_users, add_admin, remove_admin,
     save_weekly_actuals, load_weekly_actuals, delete_weekly_actuals,
     draft_exists, load_draft_config, save_draft_bands, lock_drafts,
     get_week_status,
@@ -66,7 +64,7 @@ def _cached_reference_data():
 
 @st.cache_data(ttl=60)
 def _cached_band_goals():
-    return load_band_goals_db()
+    return load_band_goals()
 
 @st.cache_data(ttl=60)
 def _cached_dm_list():
@@ -835,7 +833,7 @@ elif page == "AVS Mid-Week Pulse":
 
         # --- In-App Preview ---
         if "mw_report_df" in st.session_state:
-            from labor.avs_engine import DAY_THRESHOLDS
+            from avs_engine import DAY_THRESHOLDS
             day = st.session_state["mw_report_day"]
             thresholds = DAY_THRESHOLDS.get(day, DAY_THRESHOLDS["Friday"])
             _render_midweek_preview(st.session_state["mw_report_df"], day, thresholds)

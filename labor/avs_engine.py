@@ -1,13 +1,12 @@
 """
 AVS Labor Report Engine
 -----------------------
-Shared processing functions for all three AVS report types:
+Shared processing functions for AVS report types:
   - Weekly Full Report (AvS Summary + Store Rankings + DM Rankings)
-  - Mid-Week Pulse (Thu-Sun hours vs weekly goal)
-  - Tuesday Report (same as mid-week but stricter color thresholds)
+  - Mid-Week Pulse (day-specific pacing thresholds via DAY_THRESHOLDS)
 
 All functions accept uploaded file objects and reference data DataFrames,
-returning Excel bytes (BytesIO) for download.
+returning (BytesIO, DataFrame) tuples.
 """
 
 import io
@@ -386,7 +385,8 @@ def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_da
         wr.column_dimensions[get_column_letter(ci)].width = w
 
     ranked = df.copy()
-    ranked["labor_pct"] = ranked["loaded_payroll"] / ranked["Last Week Net Sales"]
+    ranked["labor_pct"] = ranked["loaded_payroll"] / ranked["Last Week Net Sales"].replace(0, float("nan"))
+    ranked["labor_pct"] = ranked["labor_pct"].fillna(0)
     ranked = ranked.sort_values("Variance", ascending=True).reset_index(drop=True)
 
     for rank_idx, row in ranked.iterrows():
@@ -499,161 +499,21 @@ def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_da
     return buf, df
 
 
-# ---------------------------------------------------------------------------
-# Mid-Week Pulse report (shared logic, parameterized color thresholds)
-# ---------------------------------------------------------------------------
-def _generate_midweek_base(adp_file, ref_data, band_goals, report_dates,
-                           title_prefix, red_threshold, grey_low, grey_high):
-    """
-    Core mid-week report builder. Color thresholds are parameterized:
-      - Thu-Sun version:  red>0.65, grey 0.60-0.65
-      - Tuesday version:  red>0.90, grey 0.87-0.8999, green<0.85
-    """
-    raw_payroll = preprocess_adp_csv(adp_file)
-    pagg = _aggregate_payroll(raw_payroll, include_wages=False)
-    df = _build_merged_df(ref_data, band_goals, pagg)
-    df["Pct Used"] = (df["actual_hours"] / df["Hourly Goal"]).where(df["Hourly Goal"] > 0, 0.0)
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Mid-Week Labor Pulse"
-    ws.sheet_view.showGridLines = False
-
-    headers = ["Store #", "Store Name", "DM", "Weekly Hourly Goal",
-               "Actual Hours", "Variance (Hrs)", "% of Weekly Goal Used"]
-    col_widths = [12, 34, 10, 20, 22, 18, 24]
-
-    ws.row_dimensions[1].height = 36
-    ws.merge_cells("A1:G1")
-    c = ws["A1"]
-    c.value = f"{title_prefix} — {report_dates}"
-    c.font = Font(name="Arial", size=16, bold=True, color=WHITE)
-    c.fill = _fill(DARK_NAVY)
-    c.alignment = Alignment(horizontal="center", vertical="center")
-
-    ws.row_dimensions[2].height = 24
-    for ci, (hdr, w) in enumerate(zip(headers, col_widths), 1):
-        c = ws.cell(row=2, column=ci, value=hdr)
-        c.font = Font(name="Arial", size=11, bold=True, color=WHITE)
-        c.fill = _fill(MID_BLUE)
-        c.alignment = _center
-        c.border = _thin_border()
-        ws.column_dimensions[get_column_letter(ci)].width = w
-
-    row_num = 3
-    grand_goal = grand_hours = grand_variance = 0.0
-
-    for dm_name, group in df.groupby("DM", sort=True):
-        dm_goal = dm_hours = dm_variance = 0.0
-
-        for _, row in group.iterrows():
-            variance = float(row["Variance"]) if pd.notna(row["Variance"]) else 0.0
-            hours = float(row["actual_hours"]) if pd.notna(row["actual_hours"]) else 0.0
-            goal_v = float(row["Hourly Goal"]) if pd.notna(row["Hourly Goal"]) else 0.0
-            pct_used = float(row["Pct Used"]) if pd.notna(row["Pct Used"]) else 0.0
-
-            dm_goal += goal_v
-            dm_hours += hours
-            dm_variance += variance
-
-            if pct_used > red_threshold:
-                row_fill = _fill(OVER_RED)
-            elif grey_low <= pct_used <= grey_high:
-                row_fill = _fill(NEUTRAL)
-            elif pct_used < grey_low:
-                row_fill = _fill(UNDER_GRN)
-            else:
-                row_fill = _fill(WHITE)
-            ws.row_dimensions[row_num].height = 18
-
-            vals = [row["Store #"], row["Store Name"], row["DM"], goal_v, hours, variance, pct_used]
-            fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT]
-            aligns = [_center, _left, _center, _center, _center, _center, _center]
-            for ci, (val, fmt, aln) in enumerate(zip(vals, fmts, aligns), 1):
-                c = ws.cell(row=row_num, column=ci, value=val)
-                c.font = Font(name="Arial", size=10)
-                c.fill = row_fill
-                c.alignment = aln
-                c.border = _thin_border()
-                if fmt:
-                    c.number_format = fmt
-            row_num += 1
-
-        dm_pct = dm_hours / dm_goal if dm_goal else 0.0
-        ws.row_dimensions[row_num].height = 20
-        sub_vals = ["", f"{dm_name} — Subtotal", "", dm_goal, dm_hours, round(dm_variance, 2), dm_pct]
-        sub_fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT]
-        for ci, (val, fmt) in enumerate(zip(sub_vals, sub_fmts), 1):
-            c = ws.cell(row=row_num, column=ci, value=val)
-            c.font = Font(name="Arial", size=10, bold=True, color="1F3864")
-            c.fill = _fill(SUBTOTAL_CLR)
-            c.alignment = _left if ci == 2 else _center
-            c.border = _subtotal_border()
-            if fmt:
-                c.number_format = fmt
-        row_num += 1
-        grand_goal += dm_goal
-        grand_hours += dm_hours
-        grand_variance += dm_variance
-
-    # Grand total
-    grand_pct = grand_hours / grand_goal if grand_goal else 0.0
-    ws.row_dimensions[row_num].height = 24
-    gt_vals = ["", "GRAND TOTAL", "", grand_goal, grand_hours, round(grand_variance, 2), grand_pct]
-    gt_fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT]
-    for ci, (val, fmt) in enumerate(zip(gt_vals, gt_fmts), 1):
-        c = ws.cell(row=row_num, column=ci, value=val)
-        c.font = Font(name="Arial", size=11, bold=True, color=WHITE)
-        c.fill = _fill(DARK_NAVY)
-        c.alignment = _center if ci != 2 else _left
-        c.border = _thin_border()
-        if fmt:
-            c.number_format = fmt
-
-    # Legend
-    row_num += 2
-    ws.merge_cells(f"A{row_num}:C{row_num}")
-    ws[f"A{row_num}"].value = "Legend"
-    ws[f"A{row_num}"].font = Font(name="Arial", size=10, bold=True)
-    row_num += 1
-    legend_items = [
-        (OVER_RED, f"> {red_threshold:.0%} of Weekly Goal Used"),
-        (NEUTRAL, f"{grey_low:.0%} – {grey_high:.0%} of Weekly Goal Used"),
-        (UNDER_GRN, f"< {grey_low:.0%} of Weekly Goal Used"),
-    ]
-    for hex_c, label in legend_items:
-        ws.cell(row=row_num, column=1).fill = _fill(hex_c)
-        ws.cell(row=row_num, column=1).border = _thin_border()
-        c = ws.cell(row=row_num, column=2, value=label)
-        c.font = Font(name="Arial", size=10)
-        c.alignment = _left
-        row_num += 1
-
-    row_num += 1
-    ws.merge_cells(f"A{row_num}:G{row_num}")
-    note = ws[f"A{row_num}"]
-    note.value = "* Variance and % Used are measured against the full weekly hourly goal."
-    note.font = Font(name="Arial", size=9, italic=True, color="666666")
-    note.alignment = _left
-    ws.freeze_panes = "A3"
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
-
 
 # ---------------------------------------------------------------------------
 # Day-specific color thresholds for Mid-Week Pulse
-# Orange = below min (under-pacing), Green = min-max (on track), Red = above max (over-pacing)
+# Orange = below green_min (under-pacing)
+# Green  = green_min to green_max (on pace)
+# Red    = above green_max (over-pacing)
+# Note: red_above is set equal to green_max so there is no gap
 # ---------------------------------------------------------------------------
 DAY_THRESHOLDS = {
-    "Friday":    {"green_min": 0.1179, "green_max": 0.1679, "red_above": 0.1678},
-    "Saturday":  {"green_min": 0.2607, "green_max": 0.3107, "red_above": 0.3108},
-    "Sunday":    {"green_min": 0.54, "green_max": 0.599, "red_above": 0.60},
+    "Friday":    {"green_min": 0.1179, "green_max": 0.1679, "red_above": 0.1679},
+    "Saturday":  {"green_min": 0.2607, "green_max": 0.3107, "red_above": 0.3107},
+    "Sunday":    {"green_min": 0.54,   "green_max": 0.599,  "red_above": 0.599},
     "Monday":    {"green_min": 0.5464, "green_max": 0.5964, "red_above": 0.5964},
-    "Tuesday":   {"green_min": 0.6893, "green_max": 0.7393, "red_above": 0.7394},
-    "Wednesday": {"green_min": 0.8321, "green_max": 0.8821, "red_above": 0.8822},
+    "Tuesday":   {"green_min": 0.6893, "green_max": 0.7393, "red_above": 0.7393},
+    "Wednesday": {"green_min": 0.8321, "green_max": 0.8821, "red_above": 0.8821},
 }
 
 # Color constants for the new 3-color scheme

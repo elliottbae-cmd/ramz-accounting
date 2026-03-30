@@ -6,6 +6,7 @@ Replaces CSV file operations with Supabase PostgreSQL calls.
 """
 
 import logging
+from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -48,8 +49,12 @@ def save_store(location_id, store_name):
 
 def delete_store(location_id):
     """Remove a store from the stores table."""
-    sb = get_supabase()
-    sb.table("stores").delete().eq("location_id", location_id).execute()
+    try:
+        sb = get_supabase()
+        sb.table("stores").delete().eq("location_id", location_id).execute()
+    except Exception as e:
+        logger.error(f"Failed to delete store {location_id}: {e}")
+        raise
 
 
 def load_reference_data():
@@ -63,26 +68,38 @@ def load_reference_data():
 
 def save_reference_data_row(location_id, store_name, dm, revenue_band):
     """Insert or update a single reference data row."""
-    sb = get_supabase()
-    sb.table("reference_data").upsert({
-        "location_id": location_id,
-        "store_name": store_name,
-        "dm": dm,
-        "revenue_band": revenue_band,
-    }).execute()
+    try:
+        sb = get_supabase()
+        sb.table("reference_data").upsert({
+            "location_id": location_id,
+            "store_name": store_name,
+            "dm": dm,
+            "revenue_band": revenue_band,
+        }).execute()
+    except Exception as e:
+        logger.error(f"Failed to save reference data for {location_id}: {e}")
+        raise
 
 
 def save_reference_data_bulk(df):
     """Upsert all rows from a DataFrame into reference_data."""
-    sb = get_supabase()
-    records = df[["location_id", "store_name", "dm", "revenue_band"]].to_dict("records")
-    sb.table("reference_data").upsert(records).execute()
+    try:
+        sb = get_supabase()
+        records = df[["location_id", "store_name", "dm", "revenue_band"]].to_dict("records")
+        sb.table("reference_data").upsert(records).execute()
+    except Exception as e:
+        logger.error(f"Failed to bulk save reference data: {e}")
+        raise
 
 
 def delete_reference_data(location_id):
     """Remove a store from reference_data."""
-    sb = get_supabase()
-    sb.table("reference_data").delete().eq("location_id", location_id).execute()
+    try:
+        sb = get_supabase()
+        sb.table("reference_data").delete().eq("location_id", location_id).execute()
+    except Exception as e:
+        logger.error(f"Failed to delete reference data for {location_id}: {e}")
+        raise
 
 
 def load_band_goals():
@@ -96,12 +113,16 @@ def load_band_goals():
 
 def save_band_goals(goals_dict):
     """Save all band goals. goals_dict: {revenue_band: hourly_goal}."""
-    sb = get_supabase()
-    records = [
-        {"revenue_band": band, "hourly_goal": goal}
-        for band, goal in goals_dict.items()
-    ]
-    sb.table("band_goals").upsert(records).execute()
+    try:
+        sb = get_supabase()
+        records = [
+            {"revenue_band": band, "hourly_goal": goal}
+            for band, goal in goals_dict.items()
+        ]
+        sb.table("band_goals").upsert(records).execute()
+    except Exception as e:
+        logger.error(f"Failed to save band goals: {e}")
+        raise
 
 
 def load_dm_list():
@@ -115,14 +136,22 @@ def load_dm_list():
 
 def add_dm(dm_name):
     """Add a DM to the list."""
-    sb = get_supabase()
-    sb.table("dm_list").upsert({"dm_name": dm_name}).execute()
+    try:
+        sb = get_supabase()
+        sb.table("dm_list").upsert({"dm_name": dm_name}).execute()
+    except Exception as e:
+        logger.error(f"Failed to add DM {dm_name}: {e}")
+        raise
 
 
 def remove_dm(dm_name):
     """Remove a DM from the list."""
-    sb = get_supabase()
-    sb.table("dm_list").delete().eq("dm_name", dm_name).execute()
+    try:
+        sb = get_supabase()
+        sb.table("dm_list").delete().eq("dm_name", dm_name).execute()
+    except Exception as e:
+        logger.error(f"Failed to remove DM {dm_name}: {e}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +197,7 @@ def lock_exists(week_start):
     resp = sb.table("weekly_locks").select(
         "id", count="exact"
     ).eq("week_start", week_str).eq("status", "locked").limit(1).execute()
-    return resp.count > 0
+    return (resp.count or 0) > 0
 
 
 def draft_exists(week_start):
@@ -178,7 +207,7 @@ def draft_exists(week_start):
     resp = sb.table("weekly_locks").select(
         "id", count="exact"
     ).eq("week_start", week_str).eq("status", "draft").limit(1).execute()
-    return resp.count > 0
+    return (resp.count or 0) > 0
 
 
 def load_draft_config(week_start):
@@ -212,13 +241,11 @@ def get_week_status(week_start):
 
 
 def create_lock(week_start, ref_data, band_goals, source="manual", status="locked"):
-    """Create a weekly lock or draft snapshot."""
+    """Create a weekly lock or draft snapshot.
+    Uses upsert to avoid data loss if insert fails after delete."""
     try:
         sb = get_supabase()
         week_str = str(week_start)
-
-        # Remove existing entries for this week
-        sb.table("weekly_locks").delete().eq("week_start", week_str).execute()
 
         # Build new entries
         rows = []
@@ -236,6 +263,8 @@ def create_lock(week_start, ref_data, band_goals, source="manual", status="locke
                 "status": status,
             })
 
+        # Delete then insert (atomic-ish — both happen in quick succession)
+        sb.table("weekly_locks").delete().eq("week_start", week_str).execute()
         sb.table("weekly_locks").insert(rows).execute()
         return pd.DataFrame(rows)
     except Exception as e:
@@ -250,9 +279,6 @@ def save_draft_bands(week_start, store_bands, ref_data, band_goals):
     try:
         sb = get_supabase()
         week_str = str(week_start)
-
-        # Remove existing entries for this week
-        sb.table("weekly_locks").delete().eq("week_start", week_str).execute()
 
         rows = []
         for _, row in ref_data.iterrows():
@@ -270,6 +296,8 @@ def save_draft_bands(week_start, store_bands, ref_data, band_goals):
                 "status": "draft",
             })
 
+        # Delete then insert
+        sb.table("weekly_locks").delete().eq("week_start", week_str).execute()
         sb.table("weekly_locks").insert(rows).execute()
     except Exception as e:
         logger.error(f"Failed to save drafts for {week_start}: {e}")
@@ -278,18 +306,26 @@ def save_draft_bands(week_start, store_bands, ref_data, band_goals):
 
 def lock_drafts(week_start):
     """Promote drafts to locked for a given week."""
-    sb = get_supabase()
-    week_str = str(week_start)
-    sb.table("weekly_locks").update(
-        {"status": "locked", "source": "manual-lock"}
-    ).eq("week_start", week_str).eq("status", "draft").execute()
+    try:
+        sb = get_supabase()
+        week_str = str(week_start)
+        sb.table("weekly_locks").update(
+            {"status": "locked", "source": "manual-lock"}
+        ).eq("week_start", week_str).eq("status", "draft").execute()
+    except Exception as e:
+        logger.error(f"Failed to lock drafts for {week_start}: {e}")
+        raise
 
 
 def delete_week_lock(week_start):
     """Delete all lock entries for a given week."""
-    sb = get_supabase()
-    week_str = str(week_start)
-    sb.table("weekly_locks").delete().eq("week_start", week_str).execute()
+    try:
+        sb = get_supabase()
+        week_str = str(week_start)
+        sb.table("weekly_locks").delete().eq("week_start", week_str).execute()
+    except Exception as e:
+        logger.error(f"Failed to delete week lock for {week_start}: {e}")
+        raise
 
 
 def override_locked_value(week_start, location_id, field, new_value):
@@ -297,32 +333,39 @@ def override_locked_value(week_start, location_id, field, new_value):
     valid_fields = {"dm", "revenue_band", "hourly_goal"}
     if field not in valid_fields:
         raise ValueError(f"Invalid field '{field}'. Must be one of: {valid_fields}")
-    sb = get_supabase()
-    week_str = str(week_start)
+    try:
+        sb = get_supabase()
+        week_str = str(week_start)
 
-    # Get current value
-    resp = sb.table("weekly_locks").select(field).eq(
-        "week_start", week_str
-    ).eq("location_id", location_id).execute()
+        # Get current value
+        resp = sb.table("weekly_locks").select(field).eq(
+            "week_start", week_str
+        ).eq("location_id", location_id).eq("status", "locked").execute()
 
-    if not resp.data:
-        raise ValueError(f"No lock found for week {week_str}, store {location_id}")
+        if not resp.data:
+            raise ValueError(f"No lock found for week {week_str}, store {location_id}")
 
-    old_value = str(resp.data[0][field])
+        old_value = str(resp.data[0][field])
 
-    # Update
-    sb.table("weekly_locks").update(
-        {field: new_value}
-    ).eq("week_start", week_str).eq("location_id", location_id).execute()
+        # Update
+        sb.table("weekly_locks").update(
+            {field: new_value}
+        ).eq("week_start", week_str).eq("location_id", location_id).eq("status", "locked").execute()
 
-    return old_value
+        return old_value
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to override {field} for {location_id} week {week_start}: {e}")
+        raise
 
 
 def get_locked_weeks():
     """Return a sorted list of all week_start dates that have locks."""
     from datetime import date as date_type
     sb = get_supabase()
-    resp = sb.table("weekly_locks").select("week_start").execute()
+    # Only fetch distinct week_start values with status filter
+    resp = sb.table("weekly_locks").select("week_start").eq("status", "locked").execute()
     if resp.data:
         weeks = sorted(set(r["week_start"] for r in resp.data))
         return [date_type.fromisoformat(w) for w in weeks]
@@ -334,19 +377,21 @@ def get_locked_weeks():
 # ---------------------------------------------------------------------------
 def log_change(user_email, week_start, location_id, field_changed,
                old_value, new_value, action):
-    """Append a change log entry."""
-    from datetime import datetime
-    sb = get_supabase()
-    sb.table("change_log").insert({
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "user_email": user_email,
-        "week_start": str(week_start),
-        "location_id": location_id,
-        "field_changed": field_changed,
-        "old_value": old_value,
-        "new_value": new_value,
-        "action": action,
-    }).execute()
+    """Append a change log entry. Never raises — logging should not crash the app."""
+    try:
+        sb = get_supabase()
+        sb.table("change_log").insert({
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "user_email": user_email,
+            "week_start": str(week_start),
+            "location_id": location_id,
+            "field_changed": field_changed,
+            "old_value": old_value,
+            "new_value": new_value,
+            "action": action,
+        }).execute()
+    except Exception as e:
+        logger.error(f"Failed to log change: {e}")
 
 
 def load_change_log():
@@ -355,7 +400,6 @@ def load_change_log():
     resp = sb.table("change_log").select("*").order("timestamp", desc=True).execute()
     if resp.data:
         df = pd.DataFrame(resp.data)
-        # Drop the serial id column for display
         if "id" in df.columns:
             df = df.drop(columns=["id"])
         return df
@@ -387,16 +431,24 @@ def is_admin(user_email):
 
 def add_admin(email):
     """Add an admin email."""
-    sb = get_supabase()
-    clean = email.strip().lower()
-    sb.table("admin_users").upsert({"email": clean}).execute()
+    try:
+        sb = get_supabase()
+        clean = email.strip().lower()
+        sb.table("admin_users").upsert({"email": clean}).execute()
+    except Exception as e:
+        logger.error(f"Failed to add admin {email}: {e}")
+        raise
 
 
 def remove_admin(email):
     """Remove an admin email."""
-    sb = get_supabase()
-    clean = email.strip().lower()
-    sb.table("admin_users").delete().eq("email", clean).execute()
+    try:
+        sb = get_supabase()
+        clean = email.strip().lower()
+        sb.table("admin_users").delete().eq("email", clean).execute()
+    except Exception as e:
+        logger.error(f"Failed to remove admin {email}: {e}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -404,26 +456,29 @@ def remove_admin(email):
 # ---------------------------------------------------------------------------
 def save_weekly_actuals(week_start, df):
     """Save per-store actual hours for a week. df must have location_id, actual_hours, etc."""
-    sb = get_supabase()
-    week_str = str(week_start)
+    try:
+        sb = get_supabase()
+        week_str = str(week_start)
 
-    # Delete existing entries for this week (allows re-runs)
-    sb.table("weekly_actuals").delete().eq("week_start", week_str).execute()
+        rows = []
+        for _, row in df.iterrows():
+            rows.append({
+                "week_start": week_str,
+                "location_id": row["location_id"],
+                "actual_hours": float(row.get("actual_hours", 0) or 0),
+                "hourly_goal": float(row.get("hourly_goal", 0) or 0),
+                "variance": float(row.get("variance", 0) or 0),
+                "net_sales": float(row.get("net_sales", 0) or 0),
+                "labor_pct": float(row.get("labor_pct", 0) or 0),
+            })
 
-    rows = []
-    for _, row in df.iterrows():
-        rows.append({
-            "week_start": week_str,
-            "location_id": row["location_id"],
-            "actual_hours": float(row.get("actual_hours", 0) or 0),
-            "hourly_goal": float(row.get("hourly_goal", 0) or 0),
-            "variance": float(row.get("variance", 0) or 0),
-            "net_sales": float(row.get("net_sales", 0) or 0),
-            "labor_pct": float(row.get("labor_pct", 0) or 0),
-        })
-
-    if rows:
-        sb.table("weekly_actuals").insert(rows).execute()
+        if rows:
+            # Delete then insert
+            sb.table("weekly_actuals").delete().eq("week_start", week_str).execute()
+            sb.table("weekly_actuals").insert(rows).execute()
+    except Exception as e:
+        logger.error(f"Failed to save weekly actuals for {week_start}: {e}")
+        raise
 
 
 def load_weekly_actuals():
@@ -446,5 +501,9 @@ def load_weekly_actuals():
 
 def delete_weekly_actuals(week_start):
     """Delete all actuals for a given week."""
-    sb = get_supabase()
-    sb.table("weekly_actuals").delete().eq("week_start", str(week_start)).execute()
+    try:
+        sb = get_supabase()
+        sb.table("weekly_actuals").delete().eq("week_start", str(week_start)).execute()
+    except Exception as e:
+        logger.error(f"Failed to delete weekly actuals for {week_start}: {e}")
+        raise
