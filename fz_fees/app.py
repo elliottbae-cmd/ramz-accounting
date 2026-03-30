@@ -1359,13 +1359,22 @@ elif page == "Store Revenue Bands":
         else:
             week_data[str(w)] = {}
 
-    # --- Header row with status badges ---
+    # --- Header row with status badges (sticky) ---
     st.markdown("""<style>
     .week-locked { color: #fff; background: #2B3A4E; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
     .week-draft { color: #2B3A4E; background: #C49A5C; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
     .week-open { color: #666; background: #eee; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+    /* Sticky header for rev bands grid */
+    div[data-testid="stVerticalBlock"] > div:has(> div > div > .rev-band-header) {
+        position: sticky;
+        top: 0;
+        background: white;
+        z-index: 99;
+        padding-bottom: 4px;
+    }
     </style>""", unsafe_allow_html=True)
 
+    st.markdown("<div class='rev-band-header'></div>", unsafe_allow_html=True)
     header_cols = st.columns([2, 3] + [2] * 5)
     with header_cols[0]:
         st.markdown("**Store #**")
@@ -1420,22 +1429,29 @@ elif page == "Store Revenue Bands":
 
         st.divider()
 
-        # Action buttons row
-        btn_cols = st.columns([2, 3] + [2] * 5)
-        with btn_cols[0]:
-            save_drafts_btn = st.form_submit_button("Save All Drafts", type="primary")
+        # Save buttons — one per unlocked week
+        save_cols = st.columns([2, 3] + [2] * 5)
+        with save_cols[0]:
+            st.write("")  # spacer
+        with save_cols[1]:
+            st.write("")  # spacer
+        for i, (w, label, status) in enumerate(zip(weeks, week_labels, week_statuses)):
+            with save_cols[i + 2]:
+                if w == current_week or status == "locked":
+                    st.write("")  # locked — no button
+                else:
+                    st.form_submit_button(f"Save", key=f"save_draft_{w}")
 
-    # Handle save
-    if save_drafts_btn:
-        for w, status in zip(weeks, week_statuses):
-            # Skip current week and already-locked weeks
-            if w == current_week or status == "locked":
-                continue
+    # Handle per-week saves
+    for w, label, status in zip(weeks, week_labels, week_statuses):
+        if w == current_week or status == "locked":
+            continue
+        if st.session_state.get(f"save_draft_{w}"):
             w_str = str(w)
             save_draft_bands(w, grid_data[w_str], ref_df, band_goals)
-        st.success("Drafts saved for future weeks!")
-        st.cache_data.clear()
-        st.rerun()
+            st.success(f"Draft saved for {label}!")
+            st.cache_data.clear()
+            st.rerun()
 
     # Lock buttons (outside form since forms can only have one submit)
     st.subheader("Lock a Week")
@@ -1520,13 +1536,19 @@ elif page == "Store Revenue Bands":
 
                     if status == "locked":
                         cfg = load_locked_config(w)
-                    else:
+                    elif status == "draft":
                         cfg = load_draft_config(w)
+                    else:
+                        # Open week — build from current settings
+                        cfg = None
 
-                    if cfg is None or cfg.empty:
-                        continue
+                    if cfg is None or (hasattr(cfg, 'empty') and cfg.empty):
+                        # Build from current base config
+                        ref_data = _cached_reference_data()
+                        current_goals = _cached_band_goals()
+                        cfg = ref_data.copy()
+                        cfg["hourly_goal"] = cfg["revenue_band"].map(current_goals).fillna(0)
 
-                    # Build data with hourly goals
                     cfg = cfg.sort_values("location_id").reset_index(drop=True)
 
                     # Sheet name (max 31 chars for Excel)
