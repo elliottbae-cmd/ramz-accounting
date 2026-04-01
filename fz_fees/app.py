@@ -64,6 +64,47 @@ VARIANCE_GOAL_THRESHOLD = 30
 # Days of week used in Email Settings dropdowns
 DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
+# Revenue band dollar ranges (min, max) — None means no numeric range (NRO stores)
+BAND_RANGES = {
+    "<25k":         (0,      25_000),
+    "25k-30k":      (25_000, 30_000),
+    "30k-35k":      (30_000, 35_000),
+    "35k-40k":      (35_000, 40_000),
+    "40k-45k":      (40_000, 45_000),
+    "45k-50k":      (45_000, 50_000),
+    "50k+":         (50_000, float("inf")),
+    "NRO Seasoned": None,
+    "NRO":          None,
+}
+
+
+def _band_classify(band, actual):
+    """Return (result, variance) for a band + actual sales pair.
+    variance is positive (Over) or negative (Under) or 0 (On Target).
+    """
+    ranges = BAND_RANGES.get(band)
+    if ranges is None or actual is None:
+        return "N/A", None
+    band_min, band_max = ranges
+    if actual < band_min:
+        return "Under", actual - band_min          # negative
+    elif band_max != float("inf") and actual > band_max:
+        return "Over", actual - band_max           # positive
+    else:
+        return "On Target", 0.0
+
+
+def _fmt_variance(result, variance):
+    """Format variance as '+$2,400 (Over)' / '-$1,800 (Under)' / 'On Target'."""
+    if result == "N/A":
+        return "N/A"
+    if result == "On Target":
+        return "On Target"
+    if variance is None:
+        return result
+    sign = "+" if variance >= 0 else ""
+    return f"{sign}${variance:,.0f} ({result})"
+
 # ---------------------------------------------------------------------------
 # Cached data loaders (avoid re-reading on every Streamlit rerun)
 # ---------------------------------------------------------------------------
@@ -86,6 +127,17 @@ def _cached_all_locks():
 @st.cache_data(ttl=60)
 def _cached_weekly_actuals():
     return load_weekly_actuals()
+
+@st.cache_data(ttl=300)
+def _cached_store_sales():
+    """Load all store sales data. TTL=5min — heavier table, changes less often."""
+    from supabase_db import get_supabase
+    sb = get_supabase()
+    try:
+        resp = sb.table("store_sales").select("*").execute()
+        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 # ---------------------------------------------------------------------------
 # Shared UI Helpers
@@ -443,6 +495,7 @@ ALL_PAGES = {
     "admin": [
         "Rev Band Approvals",
         "Compliance Report",
+        "Rev Band Report",
         "Weekly Config",
         "Email Settings",
         "Change Log",
@@ -2484,4 +2537,239 @@ elif page == "Compliance Report":
             data=output,
             file_name=f"compliance_report_{period_label}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+# ==========================================
+# Rev Band Report (Admin)
+# ==========================================
+elif page == "Rev Band Report":
+    if not user_is_admin:
+        st.error("You do not have permission to access this page.")
+        st.stop()
+
+    st.title("🎯 Rev Band Hit/Miss Report")
+    st.caption(
+        "Compare GM revenue band predictions against actual weekly sales. "
+        "Green = Over (outperformed) · Red = Under (missed) · Neutral = On Target."
+    )
+
+    # --- Load data ---
+    ref_data  = _cached_reference_data()
+    all_subs  = load_all_submissions()
+    sales_df  = _cached_store_sales()
+
+    if all_subs.empty:
+        st.info("No submissions yet. This report will populate once GMs begin selecting revenue bands.")
+        st.stop()
+
+    # --- Build week list from submissions ---
+    all_week_dates = sorted(
+        {pd.Timestamp(w).date() for w in all_subs["week_start"].dropna().unique()},
+    )
+
+    # --- Period filter ---
+    filtered_week_dates = _period_filter(all_week_dates, "revband")
+    filtered_week_strs  = [str(w) for w in filtered_week_dates]
+
+    # --- DM + Result filters ---
+    col_f1, col_f2 = st.columns(2)
+    dm_options = sorted(ref_data["dm"].dropna().unique().tolist()) if not ref_data.empty else []
+    with col_f1:
+        dm_filter = st.selectbox("Filter by DM", ["All"] + dm_options, key="revband_dm")
+    with col_f2:
+        result_filter = st.selectbox(
+            "Filter by Result", ["All", "On Target", "Over", "Under", "N/A (NRO)"],
+            key="revband_result",
+        )
+
+    # --- Join submissions → sales → ref_data ---
+    week_subs = all_subs[all_subs["week_start"].isin(filtered_week_strs)].copy()
+
+    # Merge store info
+    if not ref_data.empty:
+        week_subs = week_subs.merge(
+            ref_data[["location_id", "store_name", "dm"]],
+            on="location_id", how="left",
+        )
+
+    # Merge sales
+    if not sales_df.empty:
+        week_subs = week_subs.merge(
+            sales_df[["location_id", "week_start", "net_sales"]],
+            on=["location_id", "week_start"], how="left",
+        )
+    else:
+        week_subs["net_sales"] = None
+
+    # --- Apply band classification ---
+    rows = []
+    for _, r in week_subs.iterrows():
+        band   = r.get("selected_band", "")
+        actual = r.get("net_sales")
+        dm     = r.get("dm", "")
+
+        if dm_filter != "All" and dm != dm_filter:
+            continue
+
+        try:
+            actual_num = float(actual) if actual is not None else None
+        except (TypeError, ValueError):
+            actual_num = None
+
+        result, variance = _band_classify(band, actual_num)
+        variance_fmt = _fmt_variance(result, variance)
+
+        if result_filter != "All":
+            mapped = "N/A (NRO)" if result == "N/A" else result
+            if mapped != result_filter:
+                continue
+
+        band_min, band_max = BAND_RANGES.get(band, (None, None)) or (None, None)
+        band_range_str = (
+            "N/A"
+            if band_min is None
+            else (
+                f"${band_min:,.0f}+"
+                if band_max == float("inf")
+                else f"${band_min:,.0f} – ${band_max:,.0f}"
+            )
+        )
+
+        rows.append({
+            "Week":          r.get("week_start", ""),
+            "Store":         r.get("store_name", r.get("location_id", "")),
+            "DM":            dm,
+            "Selected Band": band,
+            "Band Range":    band_range_str,
+            "Actual Sales":  f"${actual_num:,.0f}" if actual_num is not None else "No Data",
+            "Result":        result,
+            "$ Variance":    variance_fmt,
+            "_variance_raw": variance if variance is not None else 0.0,
+            "_result_raw":   result,
+        })
+
+    if not rows:
+        st.info("No data matches the selected filters.")
+        st.stop()
+
+    report_df = pd.DataFrame(rows)
+
+    # --- Summary Metrics ---
+    has_sales = report_df[report_df["Actual Sales"] != "No Data"]
+    total      = len(has_sales)
+    on_target  = int((has_sales["Result"] == "On Target").sum())
+    over       = int((has_sales["Result"] == "Over").sum())
+    under      = int((has_sales["Result"] == "Under").sum())
+    no_data    = int((report_df["Actual Sales"] == "No Data").sum())
+    avg_var    = has_sales["_variance_raw"].mean() if total else 0
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("With Sales Data",  total)
+    m2.metric("On Target",        f"{on_target} ({on_target/total*100:.0f}%)" if total else "—")
+    m3.metric("Over",             f"{over} ({over/total*100:.0f}%)"           if total else "—")
+    m4.metric("Under",            f"{under} ({under/total*100:.0f}%)"         if total else "—")
+    m5.metric("Avg $ Variance",   f"${avg_var:+,.0f}"                         if total else "—")
+
+    if no_data:
+        st.caption(f"⚠ {no_data} store/week(s) have submissions but no sales data loaded yet.")
+
+    st.divider()
+
+    # --- Main table with color coding ---
+    st.subheader("Store Detail")
+    display_cols = ["Week", "Store", "DM", "Selected Band", "Band Range",
+                    "Actual Sales", "Result", "$ Variance"]
+
+    def _color_result(row):
+        result = row["_result_raw"]
+        styles = [""] * len(row)
+        for i, col in enumerate(row.index):
+            if col in ("Result", "$ Variance"):
+                if result == "Over":
+                    styles[i] = "background-color: #D5F5E3; color: #1E8449"
+                elif result == "Under":
+                    styles[i] = "background-color: #FADBD8; color: #922B21"
+        return styles
+
+    styled = report_df[display_cols + ["_result_raw"]].style.apply(_color_result, axis=1)
+    st.dataframe(
+        styled,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"_result_raw": None},  # hide raw column
+    )
+
+    st.divider()
+
+    # --- DM Rollup ---
+    st.subheader("DM Summary")
+    dm_grp = has_sales.groupby("DM").agg(
+        Stores      = ("Store",         "count"),
+        On_Target   = ("Result",        lambda x: (x == "On Target").sum()),
+        Over        = ("Result",        lambda x: (x == "Over").sum()),
+        Under       = ("Result",        lambda x: (x == "Under").sum()),
+        Avg_Variance= ("_variance_raw", "mean"),
+    ).reset_index()
+    dm_grp["On Time %"]     = (dm_grp["On_Target"] / dm_grp["Stores"] * 100).round(0).astype(int).astype(str) + "%"
+    dm_grp["Avg $ Variance"]= dm_grp["Avg_Variance"].apply(lambda v: f"${v:+,.0f}")
+    dm_grp = dm_grp.rename(columns={"On_Target": "On Target"})
+
+    st.dataframe(
+        dm_grp[["DM", "Stores", "On Target", "Over", "Under", "On Time %", "Avg $ Variance"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
+    # --- Excel Export (generated on click only) ---
+    st.subheader("Export")
+    st.caption("Click to generate — not built automatically to keep the page fast.")
+    if st.button("📥 Generate Excel Report", type="primary", key="revband_export"):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            # Sheet 1: Store Detail
+            report_df[display_cols].to_excel(writer, sheet_name="Store Detail", index=False)
+            # Sheet 2: DM Summary
+            dm_grp[["DM", "Stores", "On Target", "Over", "Under", "On Time %", "Avg $ Variance"]].to_excel(
+                writer, sheet_name="DM Summary", index=False,
+            )
+
+            workbook  = writer.book
+            hdr_fmt   = workbook.add_format({"bold": True, "bg_color": "#2B3A4E", "font_color": "#FFFFFF", "border": 1})
+            green_fmt = workbook.add_format({"bg_color": "#D5F5E3", "font_color": "#1E8449"})
+            red_fmt   = workbook.add_format({"bg_color": "#FADBD8", "font_color": "#922B21"})
+
+            # Style Store Detail sheet
+            ws = writer.sheets["Store Detail"]
+            ws.set_row(0, 18, hdr_fmt)
+            ws.set_column("A:H", 18)
+
+            # Color Result + $ Variance columns per row
+            result_col_idx   = display_cols.index("Result")
+            variance_col_idx = display_cols.index("$ Variance")
+            for row_idx, row_data in enumerate(report_df[display_cols].itertuples(), start=1):
+                result_val = getattr(row_data, "Result", "")
+                fmt = green_fmt if result_val == "Over" else (red_fmt if result_val == "Under" else None)
+                if fmt:
+                    ws.write(row_idx, result_col_idx,   row_data.Result,     fmt)
+                    ws.write(row_idx, variance_col_idx, getattr(row_data, "_7", ""), fmt)
+
+            # Style DM Summary sheet
+            ws2 = writer.sheets["DM Summary"]
+            ws2.set_row(0, 18, hdr_fmt)
+            ws2.set_column("A:G", 18)
+
+        output.seek(0)
+        period_label = (
+            f"{filtered_week_strs[0]}_to_{filtered_week_strs[-1]}"
+            if len(filtered_week_strs) > 1
+            else (filtered_week_strs[0] if filtered_week_strs else "all")
+        )
+        st.download_button(
+            label="⬇️ Download Excel",
+            data=output,
+            file_name=f"revband_report_{period_label}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="revband_download",
         )
