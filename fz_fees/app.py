@@ -143,15 +143,21 @@ def _cached_store_sales():
 # Shared UI Helpers
 # ---------------------------------------------------------------------------
 def _period_filter(locked_weeks, key_prefix):
-    """Render a period filter (All/Month/Quarter/Year) and return filtered week list."""
+    """Render a period filter (Current Week/All/Month/Quarter/Year) and return filtered week list."""
     col_period, col_period_val = st.columns(2)
     with col_period:
         period_filter = st.selectbox(
-            "View by", ["All Weeks", "Month", "Quarter", "Year"],
+            "View by", ["Current Week", "All Weeks", "Month", "Quarter", "Year"],
             key=f"{key_prefix}_period",
         )
     with col_period_val:
-        if period_filter == "Month":
+        if period_filter == "Current Week":
+            # Most recent completed week in the dataset
+            last_week = max(locked_weeks) if locked_weeks else None
+            filtered_weeks = [last_week] if last_week else []
+            if last_week:
+                st.caption(f"Week of {last_week}")
+        elif period_filter == "Month":
             months_available = sorted(set((w.year, w.month) for w in locked_weeks))
             month_labels = [f"{y}-{m:02d}" for y, m in months_available]
             selected_month = st.selectbox("Select Month", month_labels, key=f"{key_prefix}_month")
