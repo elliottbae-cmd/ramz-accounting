@@ -11,20 +11,10 @@ returning (BytesIO, DataFrame) tuples.
 
 import io
 import re
-from pathlib import Path
-
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-
-# ---------------------------------------------------------------------------
-# Paths to CSV config files (next to this module)
-# ---------------------------------------------------------------------------
-_HERE = Path(__file__).parent
-REFERENCE_DATA_PATH = _HERE / "reference_data.csv"
-BAND_GOALS_PATH = _HERE / "band_goals.csv"
-DM_LIST_PATH = _HERE / "dm_list.csv"
 
 # ---------------------------------------------------------------------------
 # Excel style constants (shared across all reports)
@@ -59,29 +49,6 @@ def _subtotal_border():
     thick = Side(style="medium", color="2E5FA3")
     thin = Side(style="thin", color="CCCCCC")
     return Border(left=thin, right=thin, top=thick, bottom=thin)
-
-
-# ---------------------------------------------------------------------------
-# Reference data loaders
-# ---------------------------------------------------------------------------
-def load_reference_data(path=None):
-    """Load store reference data (location_id, store_name, dm, revenue_band)."""
-    p = Path(path) if path else REFERENCE_DATA_PATH
-    return pd.read_csv(p, sep="|", dtype=str)
-
-
-def load_band_goals(path=None):
-    """Load revenue band → hourly goal mapping. Returns a dict."""
-    p = Path(path) if path else BAND_GOALS_PATH
-    df = pd.read_csv(p, sep="|")
-    return dict(zip(df["revenue_band"], df["hourly_goal"].astype(float)))
-
-
-def load_dm_list(path=None):
-    """Load list of DM names."""
-    p = Path(path) if path else DM_LIST_PATH
-    df = pd.read_csv(p)
-    return sorted(df["dm_name"].dropna().unique().tolist())
 
 
 # ---------------------------------------------------------------------------

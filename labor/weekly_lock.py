@@ -54,15 +54,6 @@ def format_week_label(week_start):
     return f"Thu {week_start.month}/{week_start.day} – Wed {end.month}/{end.day}"
 
 
-def is_before_wednesday_deadline(ref_date=None):
-    """Check if we're before the Wednesday deadline for next week's config."""
-    d = ref_date or date.today()
-    if isinstance(d, datetime):
-        d = d.date()
-    # Wednesday = weekday 2
-    return d.weekday() <= 2  # Mon=0, Tue=1, Wed=2
-
-
 # ---------------------------------------------------------------------------
 # Lock management (business logic, delegates to db.py for storage)
 # ---------------------------------------------------------------------------

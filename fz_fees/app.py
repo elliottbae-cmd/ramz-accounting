@@ -778,7 +778,7 @@ elif page == "Prior Week's Reports":
             st.markdown(f"**{st.session_state['archive_week_label']}**")
             _render_weekly_preview(st.session_state["archive_df"])
 
-            buf = io.BytesIO()
+            buf = BytesIO()
             st.session_state["archive_df"].to_excel(buf, index=False, engine="openpyxl")
             buf.seek(0)
             st.download_button(
@@ -1471,7 +1471,7 @@ elif page == "Store Revenue Bands":
                 if st.button(f"Lock {label}", key=f"lock_btn_{w}"):
                     lock_drafts(w)
                     log_change(
-                        user_email=st.experimental_user.email if hasattr(st, "experimental_user") and st.experimental_user else "admin",
+                        user_email=get_current_user_email() or "admin",
                         week_start=w,
                         location_id="ALL",
                         field_changed="week_lock",
