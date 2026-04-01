@@ -2101,6 +2101,71 @@ elif page == "Rev Band Approvals":
                         elif status == "rejected":
                             st.caption(f"Reason: {row.get('rejection_reason', 'N/A')}")
 
+                    # Expandable performance data
+                    with st.expander(f"📊 View {store_name} Performance Data"):
+                        perf_cols = st.columns(3)
+
+                        # Sales data
+                        with perf_cols[0]:
+                            st.markdown("**📈 Sales**")
+                            try:
+                                sb = get_supabase()
+                                sales_resp = sb.table("store_sales").select("*").eq(
+                                    "location_id", row["location_id"]
+                                ).order("week_start", desc=True).limit(4).execute()
+                                if sales_resp.data:
+                                    for s in sales_resp.data:
+                                        st.caption(f"Wk {s['week_start']}: ${s.get('net_sales', 0):,.0f}")
+                                else:
+                                    st.caption("No sales data available")
+                            except Exception:
+                                st.caption("No sales data available")
+
+                        # SoS data
+                        with perf_cols[1]:
+                            st.markdown("**⏱️ Speed of Service**")
+                            try:
+                                sos_resp = sb.table("store_sos").select("*").eq(
+                                    "location_id", row["location_id"]
+                                ).order("week_start", desc=True).limit(4).execute()
+                                if sos_resp.data:
+                                    sos_vals = [s.get("sos_seconds", 0) for s in sos_resp.data if s.get("sos_seconds")]
+                                    if sos_vals:
+                                        avg_sos = sum(sos_vals) / len(sos_vals)
+                                        st.caption(f"Avg (last {len(sos_vals)} wks): {avg_sos/60:.1f} min")
+                                    for s in sos_resp.data:
+                                        rank = s.get("sos_rank", "N/A")
+                                        total = s.get("total_stores", "")
+                                        rank_str = f" ({rank} of {total})" if rank != "N/A" and total else ""
+                                        st.caption(f"Wk {s['week_start']}: {s.get('sos_seconds', 0)/60:.1f} min{rank_str}")
+                                else:
+                                    st.caption("No SoS data available")
+                            except Exception:
+                                st.caption("No SoS data available")
+
+                        # VOTG data
+                        with perf_cols[2]:
+                            st.markdown("**⭐ Voice of the Guest**")
+                            try:
+                                votg_resp = sb.table("store_votg").select("*").eq(
+                                    "location_id", row["location_id"]
+                                ).order("week_start", desc=True).limit(4).execute()
+                                if votg_resp.data:
+                                    neg_vals = [v.get("total_negative_reviews", 0) for v in votg_resp.data if v.get("total_negative_reviews") is not None]
+                                    if neg_vals:
+                                        avg_neg = sum(neg_vals) / len(neg_vals)
+                                        st.caption(f"Avg Neg Reviews (last {len(neg_vals)} wks): {avg_neg:.1f}")
+                                    for v in votg_resp.data:
+                                        rank = v.get("votg_rank", "N/A")
+                                        total = v.get("total_stores", "")
+                                        rank_str = f" ({rank} of {total})" if rank != "N/A" and total else ""
+                                        neg = v.get("total_negative_reviews", "N/A")
+                                        st.caption(f"Wk {v['week_start']}: {neg} neg reviews{rank_str}")
+                                else:
+                                    st.caption("No VOTG data available")
+                            except Exception:
+                                st.caption("No VOTG data available")
+
                     st.divider()
 
 # ==========================================
