@@ -1,0 +1,50 @@
+{
+  "backup_date": "2026-04-01",
+  "backup_time_utc": "2026-04-01T15:25:05.364558",
+  "tables": {
+    "reference_data": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "weekly_locks": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "rev_band_submissions": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "store_sales": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "store_sos": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "store_votg": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "gm_contacts": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "dm_list": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "app_settings": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "email_log": {
+      "rows": 0,
+      "error": "not exported"
+    },
+    "admin_users": {
+      "rows": 0,
+      "error": "not exported"
+    }
+  }
+}
