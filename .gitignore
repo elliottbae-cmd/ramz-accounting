@@ -7,6 +7,8 @@ data/
 !labor/reference_data.csv
 !labor/band_goals.csv
 !labor/dm_list.csv
+!backups/**/*.csv
+!backups/**/*.json
 
 # Streamlit secrets (contains API keys)
 .streamlit/secrets.toml
