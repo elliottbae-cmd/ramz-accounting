@@ -4,31 +4,39 @@ on:
   # ── Manual trigger (for testing or one-off sends) ──────────────────────────
   workflow_dispatch:
     inputs:
-      reminder_number:
-        description: "Which reminder to send (1=8am, 2=noon, 3=5pm)"
+      email_mode:
+        description: "Which email to send"
         required: true
-        default: "1"
+        default: "initial"
         type: choice
-        options: ["1", "2", "3"]
+        options:
+          - "initial"    # Monday — GM only
+          - "tuesday"    # Tuesday reminder — GM + DM cc
+          - "wednesday"  # Wednesday final reminder — GM + DM + CEO cc
 
-  # ── Scheduled triggers — UPDATE THESE DATES when you know the send schedule ──
-  # Currently DISABLED (no schedule set). Uncomment the lines below and set
-  # the days of week (0=Sun, 1=Mon, ... 3=Wed, 4=Thu) when reminders should run.
+  # ── Scheduled triggers ─────────────────────────────────────────────────────
+  # Currently DISABLED. Uncomment when you're ready to go live.
+  # All times UTC. Ram-Z is Central Time:
+  #   CDT (Apr–Nov): UTC-5  →  8am CT = 13:00 UTC | Noon CT = 17:00 UTC | 5pm CT = 22:00 UTC
+  #   CST (Nov–Mar): UTC-6  →  8am CT = 14:00 UTC | Noon CT = 18:00 UTC | 5pm CT = 23:00 UTC
   #
-  # Format: "minute hour day-of-month month day-of-week"
-  # All times are UTC. Ram-Z is Central Time:
-  #   CDT (summer): UTC-5  →  8am CT = 13:00 UTC | Noon CT = 17:00 UTC | 5pm CT = 22:00 UTC
-  #   CST (winter): UTC-6  →  8am CT = 14:00 UTC | Noon CT = 18:00 UTC | 5pm CT = 23:00 UTC
-  #
-  # Example — run Mon/Tue/Wed (CDT) at 8am, noon, and 5pm CT:
   # schedule:
-  #   - cron: "0 13 * * 1,2,3"    # 8am CT reminder  (Reminder 1)
-  #   - cron: "0 17 * * 1,2,3"    # Noon CT reminder  (Reminder 2)
-  #   - cron: "0 22 * * 1,2,3"    # 5pm CT reminder   (Reminder 3)
+  #   # Monday — initial email (one send, morning)
+  #   - cron: "0 13 * * 1"     # 8am CT Monday
+  #
+  #   # Tuesday — 3 reminders (GM + DM cc)
+  #   - cron: "0 13 * * 2"     # 8am CT Tuesday
+  #   - cron: "0 17 * * 2"     # Noon CT Tuesday
+  #   - cron: "0 22 * * 2"     # 5pm CT Tuesday
+  #
+  #   # Wednesday — 3 reminders (GM + DM + CEO cc)
+  #   - cron: "0 13 * * 3"     # 8am CT Wednesday
+  #   - cron: "0 17 * * 3"     # Noon CT Wednesday
+  #   - cron: "0 22 * * 3"     # 5pm CT Wednesday
 
 jobs:
   send-reminders:
-    name: Send GM reminder emails
+    name: Send revenue band emails
     runs-on: ubuntu-latest
 
     steps:
@@ -43,15 +51,15 @@ jobs:
       - name: Install dependencies
         run: pip install supabase sendgrid
 
-      - name: Send reminder emails
+      - name: Send emails
         env:
-          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
-          SENDGRID_API_KEY:     ${{ secrets.SENDGRID_API_KEY }}
-          SENDGRID_FROM_EMAIL:  ${{ secrets.SENDGRID_FROM_EMAIL }}
-          GM_PORTAL_URL:        ${{ secrets.GM_PORTAL_URL }}
-          CEO_EMAIL:            ${{ secrets.CEO_EMAIL }}
-          # For manual dispatch, use the input value.
-          # For scheduled runs, the script auto-detects from UTC hour.
-          REMINDER_NUMBER:      ${{ github.event.inputs.reminder_number || '' }}
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
+          SENDGRID_API_KEY:    ${{ secrets.SENDGRID_API_KEY }}
+          SENDGRID_FROM_EMAIL: ${{ secrets.SENDGRID_FROM_EMAIL }}
+          GM_PORTAL_URL:       ${{ secrets.GM_PORTAL_URL }}
+          CEO_EMAIL:           ${{ secrets.CEO_EMAIL }}
+          # Manual dispatch uses the dropdown selection.
+          # Scheduled runs auto-detect from day of week.
+          EMAIL_MODE:          ${{ github.event.inputs.email_mode || '' }}
         run: python send_reminders.py
