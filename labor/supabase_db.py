@@ -507,3 +507,71 @@ def delete_weekly_actuals(week_start):
     except Exception as e:
         logger.error(f"Failed to delete weekly actuals for {week_start}: {e}")
         raise
+
+
+# ---------------------------------------------------------------------------
+# Rev Band Submissions
+# ---------------------------------------------------------------------------
+def load_submissions(week_start=None, status=None):
+    """Load rev band submissions, optionally filtered by week and/or status."""
+    sb = get_supabase()
+    query = sb.table("rev_band_submissions").select("*")
+    if week_start:
+        query = query.eq("week_start", str(week_start))
+    if status:
+        query = query.eq("status", status)
+    resp = query.order("location_id").execute()
+    return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+
+
+def load_all_submissions():
+    """Load all submissions across all weeks."""
+    sb = get_supabase()
+    resp = sb.table("rev_band_submissions").select("*").order("week_start", desc=True).execute()
+    return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+
+
+def approve_submission(submission_id, admin_email):
+    """Admin approves a submission."""
+    from datetime import datetime
+    sb = get_supabase()
+    sb.table("rev_band_submissions").update({
+        "status": "approved",
+        "admin_approved_at": datetime.utcnow().isoformat(),
+        "admin_approved_by": admin_email,
+    }).eq("id", submission_id).execute()
+
+
+def reject_submission(submission_id, admin_email, reason=""):
+    """Admin rejects a submission."""
+    from datetime import datetime
+    sb = get_supabase()
+    sb.table("rev_band_submissions").update({
+        "status": "rejected",
+        "rejected_at": datetime.utcnow().isoformat(),
+        "rejected_by": admin_email,
+        "rejection_reason": reason,
+    }).eq("id", submission_id).execute()
+
+
+def load_email_log(week_start=None):
+    """Load email log, optionally filtered by week."""
+    sb = get_supabase()
+    query = sb.table("email_log").select("*")
+    if week_start:
+        query = query.eq("week_start", str(week_start))
+    resp = query.order("sent_at", desc=True).execute()
+    return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+
+
+def load_app_settings():
+    """Load all app settings as a dict."""
+    sb = get_supabase()
+    resp = sb.table("app_settings").select("*").execute()
+    return {r["key"]: r["value"] for r in resp.data} if resp.data else {}
+
+
+def save_app_setting(key, value):
+    """Save or update a single app setting."""
+    sb = get_supabase()
+    sb.table("app_settings").upsert({"key": key, "value": value}).execute()

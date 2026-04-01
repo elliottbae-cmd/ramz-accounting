@@ -44,6 +44,8 @@ from supabase_db import (
     save_weekly_actuals, load_weekly_actuals, delete_weekly_actuals,
     draft_exists, load_draft_config, save_draft_bands, lock_drafts,
     get_week_status,
+    load_submissions, load_all_submissions, approve_submission, reject_submission,
+    load_email_log, load_app_settings, save_app_setting,
 )
 
 
@@ -369,7 +371,9 @@ ALL_PAGES = {
         "Hourly Goals",
     ],
     "admin": [
+        "Rev Band Approvals",
         "Weekly Config",
+        "Email Settings",
         "Change Log",
         "Admin Users",
     ],
@@ -1982,3 +1986,192 @@ elif page == "Admin Users":
                     st.rerun()
         else:
             st.info("Cannot remove the last admin.")
+
+# ==========================================
+# Rev Band Approvals (Admin Dashboard)
+# ==========================================
+elif page == "Rev Band Approvals":
+    st.header("📋 Rev Band Approvals")
+    st.caption("Review GM revenue band submissions. Approve or reject for each store.")
+
+    # Week selector
+    all_subs = load_all_submissions()
+
+    if all_subs.empty:
+        st.info("No submissions yet. Submissions will appear here once GMs begin selecting revenue bands.")
+    else:
+        available_weeks = sorted(all_subs["week_start"].unique(), reverse=True)
+        selected_week = st.selectbox("Select Week", available_weeks, index=0,
+                                      format_func=lambda w: format_week_label(get_week_start(pd.Timestamp(w).date())))
+
+        week_subs = all_subs[all_subs["week_start"] == selected_week].copy()
+
+        # Summary metrics
+        total = len(week_subs)
+        pending_gm = len(week_subs[week_subs["status"] == "pending_gm"])
+        pending_dm = len(week_subs[week_subs["status"] == "pending_dm"])
+        pending_admin = len(week_subs[week_subs["status"] == "pending_admin"])
+        approved = len(week_subs[week_subs["status"] == "approved"])
+        rejected = len(week_subs[week_subs["status"] == "rejected"])
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Awaiting GM", pending_gm)
+        c2.metric("Awaiting DM", pending_dm)
+        c3.metric("Awaiting Admin", pending_admin)
+        c4.metric("Approved", approved)
+        c5.metric("Rejected", rejected)
+
+        st.divider()
+
+        # Filter options
+        ref_data = load_reference_data()
+        dm_list_vals = sorted(ref_data["dm"].dropna().unique().tolist())
+        filter_col1, filter_col2 = st.columns(2)
+        with filter_col1:
+            status_filter = st.selectbox("Filter by Status", ["All", "pending_gm", "pending_dm", "pending_admin", "approved", "rejected"])
+        with filter_col2:
+            dm_filter = st.selectbox("Filter by DM", ["All"] + dm_list_vals)
+
+        filtered = week_subs.copy()
+        if status_filter != "All":
+            filtered = filtered[filtered["status"] == status_filter]
+
+        # Join with reference data to get DM
+        if "dm" not in filtered.columns and not ref_data.empty:
+            filtered = filtered.merge(ref_data[["location_id", "dm"]], on="location_id", how="left")
+
+        if dm_filter != "All":
+            filtered = filtered[filtered["dm"] == dm_filter]
+
+        if filtered.empty:
+            st.info("No submissions match the selected filters.")
+        else:
+            # Load band goals for hourly goal display
+            band_goals = load_band_goals()
+
+            for _, row in filtered.iterrows():
+                store_name = ref_data[ref_data["location_id"] == row["location_id"]]["store_name"].values
+                store_name = store_name[0] if len(store_name) > 0 else row["location_id"]
+                current_band = ref_data[ref_data["location_id"] == row["location_id"]]["revenue_band"].values
+                current_band = current_band[0] if len(current_band) > 0 else "N/A"
+
+                status = row["status"]
+                selected_band = row.get("selected_band", "")
+
+                # Color code status
+                if status == "approved":
+                    status_color = "🟢"
+                elif status == "rejected":
+                    status_color = "🔴"
+                elif status == "pending_admin":
+                    status_color = "🟡"
+                elif status == "pending_dm":
+                    status_color = "🔵"
+                else:
+                    status_color = "⚪"
+
+                with st.container():
+                    col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+                    with col1:
+                        st.markdown(f"**{store_name}** ({row['location_id']})")
+                        dm_name = row.get("dm", "N/A")
+                        st.caption(f"DM: {dm_name}")
+                    with col2:
+                        st.markdown(f"Current: **{current_band}**")
+                        if selected_band:
+                            hourly_goal = band_goals.get(selected_band, "N/A")
+                            st.markdown(f"Selected: **{selected_band}** ({hourly_goal} hrs)")
+                    with col3:
+                        st.markdown(f"{status_color} **{status.replace('_', ' ').title()}**")
+                        if row.get("submitted_at"):
+                            st.caption(f"Submitted: {str(row['submitted_at'])[:16]}")
+                    with col4:
+                        if status == "pending_admin":
+                            if st.button("✅ Approve", key=f"approve_{row['id']}"):
+                                approve_submission(row["id"], "admin")
+                                st.cache_data.clear()
+                                st.rerun()
+                            reject_reason = st.text_input("Reason", key=f"reason_{row['id']}", placeholder="Optional")
+                            if st.button("❌ Reject", key=f"reject_{row['id']}"):
+                                reject_submission(row["id"], "admin", reject_reason)
+                                st.cache_data.clear()
+                                st.rerun()
+                        elif status == "approved":
+                            st.caption(f"By: {row.get('admin_approved_by', 'N/A')}")
+                        elif status == "rejected":
+                            st.caption(f"Reason: {row.get('rejection_reason', 'N/A')}")
+
+                    st.divider()
+
+# ==========================================
+# Email Settings (Admin)
+# ==========================================
+elif page == "Email Settings":
+    st.header("📧 Email Settings")
+    st.caption("Configure the email workflow for GM/DM revenue band selection.")
+
+    settings = load_app_settings()
+
+    with st.form("email_settings_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            gm_send_day = st.selectbox("GM Email Send Day",
+                ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                index=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].index(settings.get("gm_email_send_day", "Monday")))
+            gm_deadline = st.selectbox("GM Deadline Day",
+                ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                index=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].index(settings.get("gm_deadline_day", "Wednesday")))
+        with col2:
+            dm_deadline = st.selectbox("DM Deadline Day",
+                ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                index=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].index(settings.get("dm_deadline_day", "Thursday")))
+            ceo_email = st.text_input("CEO Email (for escalation)", value=settings.get("ceo_email", ""))
+
+        st.subheader("Reminder Times")
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            reminder_1 = st.text_input("Reminder 1 (next morning)", value=settings.get("reminder_1_time", "08:00"))
+        with r2:
+            reminder_2 = st.text_input("Reminder 2 (midday)", value=settings.get("reminder_2_time", "12:00"))
+        with r3:
+            reminder_3 = st.text_input("Reminder 3 (evening + escalation)", value=settings.get("reminder_3_time", "17:00"))
+
+        save_btn = st.form_submit_button("Save Settings", type="primary")
+
+    if save_btn:
+        save_app_setting("gm_email_send_day", gm_send_day)
+        save_app_setting("gm_deadline_day", gm_deadline)
+        save_app_setting("dm_deadline_day", dm_deadline)
+        save_app_setting("ceo_email", ceo_email)
+        save_app_setting("reminder_1_time", reminder_1)
+        save_app_setting("reminder_2_time", reminder_2)
+        save_app_setting("reminder_3_time", reminder_3)
+        st.success("Email settings saved!")
+        st.cache_data.clear()
+        st.rerun()
+
+    st.divider()
+
+    # DM Email Management
+    st.subheader("DM Emails")
+    st.caption("Manage DM email addresses for the approval workflow.")
+    sb = __import__("supabase_db", fromlist=["get_supabase"]).get_supabase()
+    dm_resp = sb.table("dm_list").select("*").order("dm_name").execute()
+    dm_data = dm_resp.data if dm_resp.data else []
+
+    if dm_data:
+        for dm in dm_data:
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                st.markdown(f"**{dm['dm_name']}**")
+            with c2:
+                new_email = st.text_input(f"Email for {dm['dm_name']}", value=dm.get("email", "") or "",
+                                          key=f"dm_email_{dm['dm_name']}")
+                if new_email != (dm.get("email", "") or ""):
+                    if st.button(f"Save", key=f"save_dm_email_{dm['dm_name']}"):
+                        sb.table("dm_list").update({"email": new_email}).eq("dm_name", dm["dm_name"]).execute()
+                        st.success(f"Updated email for {dm['dm_name']}")
+                        st.cache_data.clear()
+                        st.rerun()
+    else:
+        st.info("No DMs found. Add DMs in the DM Assignments page first.")
