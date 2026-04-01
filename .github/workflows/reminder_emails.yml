@@ -1,0 +1,57 @@
+name: Revenue Band Reminder Emails
+
+on:
+  # ── Manual trigger (for testing or one-off sends) ──────────────────────────
+  workflow_dispatch:
+    inputs:
+      reminder_number:
+        description: "Which reminder to send (1=8am, 2=noon, 3=5pm)"
+        required: true
+        default: "1"
+        type: choice
+        options: ["1", "2", "3"]
+
+  # ── Scheduled triggers — UPDATE THESE DATES when you know the send schedule ──
+  # Currently DISABLED (no schedule set). Uncomment the lines below and set
+  # the days of week (0=Sun, 1=Mon, ... 3=Wed, 4=Thu) when reminders should run.
+  #
+  # Format: "minute hour day-of-month month day-of-week"
+  # All times are UTC. Ram-Z is Central Time:
+  #   CDT (summer): UTC-5  →  8am CT = 13:00 UTC | Noon CT = 17:00 UTC | 5pm CT = 22:00 UTC
+  #   CST (winter): UTC-6  →  8am CT = 14:00 UTC | Noon CT = 18:00 UTC | 5pm CT = 23:00 UTC
+  #
+  # Example — run Mon/Tue/Wed (CDT) at 8am, noon, and 5pm CT:
+  # schedule:
+  #   - cron: "0 13 * * 1,2,3"    # 8am CT reminder  (Reminder 1)
+  #   - cron: "0 17 * * 1,2,3"    # Noon CT reminder  (Reminder 2)
+  #   - cron: "0 22 * * 1,2,3"    # 5pm CT reminder   (Reminder 3)
+
+jobs:
+  send-reminders:
+    name: Send GM reminder emails
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install supabase sendgrid
+
+      - name: Send reminder emails
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
+          SENDGRID_API_KEY:     ${{ secrets.SENDGRID_API_KEY }}
+          SENDGRID_FROM_EMAIL:  ${{ secrets.SENDGRID_FROM_EMAIL }}
+          GM_PORTAL_URL:        ${{ secrets.GM_PORTAL_URL }}
+          CEO_EMAIL:            ${{ secrets.CEO_EMAIL }}
+          # For manual dispatch, use the input value.
+          # For scheduled runs, the script auto-detects from UTC hour.
+          REMINDER_NUMBER:      ${{ github.event.inputs.reminder_number || '' }}
+        run: python send_reminders.py
