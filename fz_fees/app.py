@@ -6,6 +6,7 @@ Run with:
     streamlit run fz_fees/app.py
 """
 
+import os
 import sys
 from pathlib import Path
 from datetime import datetime, date, timedelta
@@ -57,6 +58,12 @@ BAND_OPTIONS = [
     "45k-50k", "50k+", "NRO Seasoned", "NRO",
 ]
 
+# Hours variance threshold for red/green coloring in performance tables
+VARIANCE_GOAL_THRESHOLD = 30
+
+# Days of week used in Email Settings dropdowns
+DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
 # ---------------------------------------------------------------------------
 # Cached data loaders (avoid re-reading on every Streamlit rerun)
 # ---------------------------------------------------------------------------
@@ -79,6 +86,70 @@ def _cached_all_locks():
 @st.cache_data(ttl=60)
 def _cached_weekly_actuals():
     return load_weekly_actuals()
+
+# ---------------------------------------------------------------------------
+# Shared UI Helpers
+# ---------------------------------------------------------------------------
+def _period_filter(locked_weeks, key_prefix):
+    """Render a period filter (All/Month/Quarter/Year) and return filtered week list."""
+    col_period, col_period_val = st.columns(2)
+    with col_period:
+        period_filter = st.selectbox(
+            "View by", ["All Weeks", "Month", "Quarter", "Year"],
+            key=f"{key_prefix}_period",
+        )
+    with col_period_val:
+        if period_filter == "Month":
+            months_available = sorted(set((w.year, w.month) for w in locked_weeks))
+            month_labels = [f"{y}-{m:02d}" for y, m in months_available]
+            selected_month = st.selectbox("Select Month", month_labels, key=f"{key_prefix}_month")
+            sel_year, sel_month = int(selected_month[:4]), int(selected_month[5:])
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month == sel_month]
+        elif period_filter == "Quarter":
+            quarters_available = sorted(set((w.year, (w.month - 1) // 3 + 1) for w in locked_weeks))
+            quarter_labels = [f"{y} Q{q}" for y, q in quarters_available]
+            selected_quarter = st.selectbox("Select Quarter", quarter_labels, key=f"{key_prefix}_quarter")
+            sel_year = int(selected_quarter[:4])
+            sel_q = int(selected_quarter[-1])
+            q_months = [(sel_q - 1) * 3 + 1, (sel_q - 1) * 3 + 2, (sel_q - 1) * 3 + 3]
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month in q_months]
+        elif period_filter == "Year":
+            years_available = sorted(set(w.year for w in locked_weeks))
+            selected_year = st.selectbox("Select Year", years_available, key=f"{key_prefix}_year")
+            filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
+        else:
+            filtered_weeks = locked_weeks
+    return filtered_weeks
+
+
+def _rename_week_cols(week_cols):
+    """Build a {ISO_date: 'Wk M/D'} rename map for pivot table week columns."""
+    col_map = {}
+    for col in week_cols:
+        try:
+            d = date.fromisoformat(col)
+            end_d = d + timedelta(days=6)
+            col_map[col] = f"Wk {end_d.month}/{end_d.day}"
+        except (ValueError, TypeError):
+            pass
+    return col_map
+
+
+def _color_variance_cells(row, week_col_map, has_actuals_weeks, skip_cols):
+    """Apply red/green background to variance cells based on VARIANCE_GOAL_THRESHOLD."""
+    styles = [""] * len(row)
+    for i, col in enumerate(row.index):
+        if col in skip_cols:
+            continue
+        orig_week = next((k for k, v in week_col_map.items() if v == col), None)
+        if orig_week not in has_actuals_weeks:
+            styles[i] = ""
+        elif abs(row[col]) > VARIANCE_GOAL_THRESHOLD:
+            styles[i] = "background-color: #FADBD8"
+        else:
+            styles[i] = "background-color: #D5F5E3"
+    return styles
+
 
 # ---------------------------------------------------------------------------
 # In-App Report Rendering Helpers
@@ -345,8 +416,7 @@ current_user = get_current_user_email()
 if current_user:
     user_is_admin = is_admin(current_user)
 else:
-    # Allow admin access only if no auth is set up (dev mode) — check for known admin email fallback
-    import os
+    # Allow admin access locally (no auth configured) but deny on Streamlit Cloud
     user_is_admin = not os.environ.get("STREAMLIT_SHARING_MODE", False)
 
 # ---------------------------------------------------------------------------
@@ -882,30 +952,7 @@ elif page == "AVS Performance - Store Level":
     all_locks = _cached_all_locks()
 
     # --- Period filter ---
-    col_period, col_period_val = st.columns(2)
-    with col_period:
-        period_filter = st.selectbox("View by", ["All Weeks", "Month", "Quarter", "Year"], key="perf_period")
-    with col_period_val:
-        if period_filter == "Month":
-            months_available = sorted(set((w.year, w.month) for w in locked_weeks))
-            month_labels = [f"{y}-{m:02d}" for y, m in months_available]
-            selected_month = st.selectbox("Select Month", month_labels, key="perf_month")
-            sel_year, sel_month = int(selected_month[:4]), int(selected_month[5:])
-            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month == sel_month]
-        elif period_filter == "Quarter":
-            quarters_available = sorted(set((w.year, (w.month - 1) // 3 + 1) for w in locked_weeks))
-            quarter_labels = [f"{y} Q{q}" for y, q in quarters_available]
-            selected_quarter = st.selectbox("Select Quarter", quarter_labels, key="perf_quarter")
-            sel_year = int(selected_quarter[:4])
-            sel_q = int(selected_quarter[-1])
-            q_months = [(sel_q - 1) * 3 + 1, (sel_q - 1) * 3 + 2, (sel_q - 1) * 3 + 3]
-            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month in q_months]
-        elif period_filter == "Year":
-            years_available = sorted(set(w.year for w in locked_weeks))
-            selected_year = st.selectbox("Select Year", years_available, key="perf_year")
-            filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
-        else:
-            filtered_weeks = locked_weeks
+    filtered_weeks = _period_filter(locked_weeks, "perf")
 
     if not filtered_weeks:
         st.warning("No data for the selected period.")
@@ -991,38 +1038,16 @@ elif page == "AVS Performance - Store Level":
     pivot = pivot.drop(columns=["_sort_var"])
 
     # Rename week columns to end date (Wednesday) labels
-    week_col_map = {}
-    for col in week_cols:
-        try:
-            d = date.fromisoformat(col)
-            end_d = d + timedelta(days=6)
-            week_col_map[col] = f"Wk {end_d.month}/{end_d.day}"
-        except (ValueError, TypeError):
-            pass
+    week_col_map = _rename_week_cols(week_cols)
     pivot = pivot.rename(columns=week_col_map)
     renamed_week_cols = [week_col_map.get(c, c) for c in week_cols]
 
     # --- Color coding: variance-based ---
-    # 0 with no actuals = no color | Within ±30 hrs = light green | Off by 30+ = light red
     has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
-
-    def color_cells(row):
-        styles = [""] * len(row)
-        for i, col in enumerate(row.index):
-            if col in ("Rank", "Store"):
-                continue
-            variance = row[col]
-            # Find original week_start for this column
-            orig_week = next((k for k, v in week_col_map.items() if v == col), None)
-            if orig_week not in has_actuals_weeks:
-                styles[i] = ""  # no actuals for this week
-            elif abs(variance) > 30:
-                styles[i] = "background-color: #ffcccc"  # light red
-            else:
-                styles[i] = "background-color: #ccffcc"  # light green
-        return styles
-
-    styled = pivot.style.apply(color_cells, axis=1)
+    styled = pivot.style.apply(
+        _color_variance_cells, week_col_map=week_col_map,
+        has_actuals_weeks=has_actuals_weeks, skip_cols=("Rank", "Store"), axis=1,
+    )
 
     # Display all rows — no internal scroll, user scrolls the browser
     st.dataframe(
@@ -1055,30 +1080,7 @@ elif page == "AVS Performance - DMs":
     all_locks = _cached_all_locks()
 
     # --- Period filter ---
-    col_period, col_period_val = st.columns(2)
-    with col_period:
-        period_filter = st.selectbox("View by", ["All Weeks", "Month", "Quarter", "Year"], key="dm_perf_period")
-    with col_period_val:
-        if period_filter == "Month":
-            months_available = sorted(set((w.year, w.month) for w in locked_weeks))
-            month_labels = [f"{y}-{m:02d}" for y, m in months_available]
-            selected_month = st.selectbox("Select Month", month_labels, key="dm_perf_month")
-            sel_year, sel_month = int(selected_month[:4]), int(selected_month[5:])
-            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month == sel_month]
-        elif period_filter == "Quarter":
-            quarters_available = sorted(set((w.year, (w.month - 1) // 3 + 1) for w in locked_weeks))
-            quarter_labels = [f"{y} Q{q}" for y, q in quarters_available]
-            selected_quarter = st.selectbox("Select Quarter", quarter_labels, key="dm_perf_quarter")
-            sel_year = int(selected_quarter[:4])
-            sel_q = int(selected_quarter[-1])
-            q_months = [(sel_q - 1) * 3 + 1, (sel_q - 1) * 3 + 2, (sel_q - 1) * 3 + 3]
-            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month in q_months]
-        elif period_filter == "Year":
-            years_available = sorted(set(w.year for w in locked_weeks))
-            selected_year = st.selectbox("Select Year", years_available, key="dm_perf_year")
-            filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
-        else:
-            filtered_weeks = locked_weeks
+    filtered_weeks = _period_filter(locked_weeks, "dm_perf")
 
     if not filtered_weeks:
         st.warning("No data for the selected period.")
@@ -1165,35 +1167,15 @@ elif page == "AVS Performance - DMs":
     pivot = pivot.drop(columns=["_sort_var"])
 
     # Rename week columns
-    week_col_map = {}
-    for col in week_cols:
-        try:
-            d = date.fromisoformat(col)
-            end_d = d + timedelta(days=6)
-            week_col_map[col] = f"Wk {end_d.month}/{end_d.day}"
-        except (ValueError, TypeError):
-            pass
+    week_col_map = _rename_week_cols(week_cols)
     pivot = pivot.rename(columns=week_col_map)
 
     # --- Color coding ---
     has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
-
-    def color_dm_cells(row):
-        styles = [""] * len(row)
-        for i, col in enumerate(row.index):
-            if col in ("Rank", "DM", "Stores"):
-                continue
-            variance = row[col]
-            orig_week = next((k for k, v in week_col_map.items() if v == col), None)
-            if orig_week not in has_actuals_weeks:
-                styles[i] = ""
-            elif abs(variance) > 30:
-                styles[i] = "background-color: #ffcccc"
-            else:
-                styles[i] = "background-color: #ccffcc"
-        return styles
-
-    styled = pivot.style.apply(color_dm_cells, axis=1)
+    styled = pivot.style.apply(
+        _color_variance_cells, week_col_map=week_col_map,
+        has_actuals_weeks=has_actuals_weeks, skip_cols=("Rank", "DM", "Stores"), axis=1,
+    )
 
     st.dataframe(
         styled,
@@ -1475,7 +1457,7 @@ elif page == "Store Revenue Bands":
                 if st.button(f"Lock {label}", key=f"lock_btn_{w}"):
                     lock_drafts(w)
                     log_change(
-                        user_email=get_current_user_email() or "admin",
+                        user_email=current_user or "admin",
                         week_start=w,
                         location_id="ALL",
                         field_changed="week_lock",
@@ -1991,7 +1973,11 @@ elif page == "Admin Users":
 # Rev Band Approvals (Admin Dashboard)
 # ==========================================
 elif page == "Rev Band Approvals":
-    st.header("📋 Rev Band Approvals")
+    if not user_is_admin:
+        st.error("You do not have permission to access this page.")
+        st.stop()
+
+    st.title("📋 Rev Band Approvals")
     st.caption("Review GM revenue band submissions. Approve or reject for each store.")
 
     # Week selector
@@ -2024,7 +2010,7 @@ elif page == "Rev Band Approvals":
         st.divider()
 
         # Filter options
-        ref_data = load_reference_data()
+        ref_data = _cached_reference_data()
         dm_list_vals = sorted(ref_data["dm"].dropna().unique().tolist())
         filter_col1, filter_col2 = st.columns(2)
         with filter_col1:
@@ -2047,7 +2033,7 @@ elif page == "Rev Band Approvals":
             st.info("No submissions match the selected filters.")
         else:
             # Load band goals for hourly goal display
-            band_goals = load_band_goals()
+            band_goals = _cached_band_goals()
 
             for _, row in filtered.iterrows():
                 store_name = ref_data[ref_data["location_id"] == row["location_id"]]["store_name"].values
@@ -2172,7 +2158,11 @@ elif page == "Rev Band Approvals":
 # Email Settings (Admin)
 # ==========================================
 elif page == "Email Settings":
-    st.header("📧 Email Settings")
+    if not user_is_admin:
+        st.error("You do not have permission to access this page.")
+        st.stop()
+
+    st.title("📧 Email Settings")
     st.caption("Configure the email workflow for GM/DM revenue band selection.")
 
     settings = load_app_settings()
@@ -2180,16 +2170,13 @@ elif page == "Email Settings":
     with st.form("email_settings_form"):
         col1, col2 = st.columns(2)
         with col1:
-            gm_send_day = st.selectbox("GM Email Send Day",
-                ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-                index=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].index(settings.get("gm_email_send_day", "Monday")))
-            gm_deadline = st.selectbox("GM Deadline Day",
-                ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-                index=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].index(settings.get("gm_deadline_day", "Wednesday")))
+            gm_send_day = st.selectbox("GM Email Send Day", DAYS_OF_WEEK,
+                index=DAYS_OF_WEEK.index(settings.get("gm_email_send_day", "Monday")))
+            gm_deadline = st.selectbox("GM Deadline Day", DAYS_OF_WEEK,
+                index=DAYS_OF_WEEK.index(settings.get("gm_deadline_day", "Wednesday")))
         with col2:
-            dm_deadline = st.selectbox("DM Deadline Day",
-                ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-                index=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].index(settings.get("dm_deadline_day", "Thursday")))
+            dm_deadline = st.selectbox("DM Deadline Day", DAYS_OF_WEEK,
+                index=DAYS_OF_WEEK.index(settings.get("dm_deadline_day", "Thursday")))
             ceo_email = st.text_input("CEO Email (for escalation)", value=settings.get("ceo_email", ""))
 
         st.subheader("Reminder Times")
@@ -2220,7 +2207,8 @@ elif page == "Email Settings":
     # DM Email Management
     st.subheader("DM Emails")
     st.caption("Manage DM email addresses for the approval workflow.")
-    sb = __import__("supabase_db", fromlist=["get_supabase"]).get_supabase()
+    from supabase_db import get_supabase as _get_supabase
+    sb = _get_supabase()
     dm_resp = sb.table("dm_list").select("*").order("dm_name").execute()
     dm_data = dm_resp.data if dm_resp.data else []
 

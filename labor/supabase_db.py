@@ -418,7 +418,7 @@ def load_admin_users():
     resp = sb.table("admin_users").select("email").execute()
     if resp.data:
         return sorted([r["email"].strip().lower() for r in resp.data])
-    return ["elliottbae@gmail.com"]
+    return []
 
 
 def is_admin(user_email):
@@ -533,25 +533,31 @@ def load_all_submissions():
 
 def approve_submission(submission_id, admin_email):
     """Admin approves a submission."""
-    from datetime import datetime
-    sb = get_supabase()
-    sb.table("rev_band_submissions").update({
-        "status": "approved",
-        "admin_approved_at": datetime.utcnow().isoformat(),
-        "admin_approved_by": admin_email,
-    }).eq("id", submission_id).execute()
+    try:
+        sb = get_supabase()
+        sb.table("rev_band_submissions").update({
+            "status": "approved",
+            "admin_approved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "admin_approved_by": admin_email,
+        }).eq("id", submission_id).execute()
+    except Exception as e:
+        logger.error(f"Failed to approve submission {submission_id}: {e}")
+        raise
 
 
 def reject_submission(submission_id, admin_email, reason=""):
     """Admin rejects a submission."""
-    from datetime import datetime
-    sb = get_supabase()
-    sb.table("rev_band_submissions").update({
-        "status": "rejected",
-        "rejected_at": datetime.utcnow().isoformat(),
-        "rejected_by": admin_email,
-        "rejection_reason": reason,
-    }).eq("id", submission_id).execute()
+    try:
+        sb = get_supabase()
+        sb.table("rev_band_submissions").update({
+            "status": "rejected",
+            "rejected_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "rejected_by": admin_email,
+            "rejection_reason": reason,
+        }).eq("id", submission_id).execute()
+    except Exception as e:
+        logger.error(f"Failed to reject submission {submission_id}: {e}")
+        raise
 
 
 def load_email_log(week_start=None):

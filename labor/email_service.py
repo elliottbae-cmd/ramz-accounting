@@ -17,7 +17,7 @@ import streamlit as st
 try:
     from sendgrid import SendGridAPIClient
     from sendgrid.helpers.mail import (
-        Mail, Email, To, Content, HtmlContent,
+        Mail, Email, To, HtmlContent,
         Cc, Subject,
     )
     SENDGRID_AVAILABLE = True
@@ -257,7 +257,7 @@ def build_gm_selection_email(
                     Avg Speed of Service (Last 4 Weeks)
                 </td>
                 <td style="padding:8px 12px; border-bottom:1px solid #eee; color:#333; font-size:13px; font-weight:bold; text-align:right;">
-                    {fmt_number(avg_sos / 60 if avg_sos else None)} min
+                    {fmt_number(avg_sos / 60 if avg_sos is not None else None)} min
                 </td>
             </tr>
             <tr>

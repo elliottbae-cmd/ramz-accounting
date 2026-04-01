@@ -16,11 +16,9 @@ from datetime import datetime, date, timedelta
 import pandas as pd
 
 from supabase_db import (
-    load_all_locks, load_locked_config, lock_exists,
-    create_lock, override_locked_value as _db_override,
-    get_locked_weeks, log_change, load_change_log,
-    load_admin_users, is_admin, add_admin, remove_admin,
-    draft_exists, lock_drafts, load_draft_config,
+    load_locked_config, create_lock,
+    override_locked_value as _db_override,
+    log_change, draft_exists, lock_drafts, load_draft_config,
 )
 
 

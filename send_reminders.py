@@ -19,7 +19,7 @@ If EMAIL_MODE is not set, the script auto-detects from the current day of week.
 
 import os
 import sys
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta, datetime, timezone
 
 # ── Dependencies ─────────────────────────────────────────────────────────────
 try:
@@ -40,7 +40,7 @@ except ImportError:
 SUPABASE_URL     = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY     = os.environ.get("SUPABASE_KEY", "")
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
-FROM_EMAIL       = os.environ.get("SENDGRID_FROM_EMAIL", "noreply@ramzrestaurants.com")
+FROM_EMAIL       = os.environ.get("SENDGRID_FROM_EMAIL", "")
 GM_PORTAL_URL    = os.environ.get("GM_PORTAL_URL", "https://ramz-gm-portal.streamlit.app")
 CEO_EMAIL        = os.environ.get("CEO_EMAIL", "")
 EMAIL_MODE       = os.environ.get("EMAIL_MODE", "").strip().lower()
@@ -135,7 +135,7 @@ def log_email(week_start, location_id, to_email, subject, email_type, success, e
             "email_type":    email_type,
             "success":       success,
             "error_msg":     error_msg,
-            "sent_at":       datetime.utcnow().isoformat(),
+            "sent_at":       datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }).execute()
     except Exception as e:
         print(f"  \u26a0 Could not write email log: {e}")
