@@ -3,3 +3,4 @@ openpyxl
 streamlit>=1.55.0
 altair>=5.0.0
 supabase
+sendgrid
