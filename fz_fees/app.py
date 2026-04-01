@@ -442,6 +442,7 @@ ALL_PAGES = {
     ],
     "admin": [
         "Rev Band Approvals",
+        "Compliance Report",
         "Weekly Config",
         "Email Settings",
         "Change Log",
@@ -2228,3 +2229,259 @@ elif page == "Email Settings":
                         st.rerun()
     else:
         st.info("No DMs found. Add DMs in the DM Assignments page first.")
+
+# ==========================================
+# Compliance Report (Admin)
+# ==========================================
+elif page == "Compliance Report":
+    if not user_is_admin:
+        st.error("You do not have permission to access this page.")
+        st.stop()
+
+    st.title("📋 Compliance Report")
+    st.caption(
+        "GM submission timeliness and DM approval compliance. "
+        "On Time = GM submitted before Tuesday 8am · DM On Time = approved before Wednesday 8am."
+    )
+
+    # --- Load base data ---
+    ref_data   = _cached_reference_data()
+    all_subs   = load_all_submissions()
+    email_log_df = load_email_log()
+
+    if all_subs.empty and email_log_df.empty:
+        st.info("No compliance data yet. Data will appear once GMs begin submitting revenue bands.")
+        st.stop()
+
+    # --- Build unified week list ---
+    weeks_set = set()
+    if not all_subs.empty:
+        weeks_set.update(all_subs["week_start"].dropna().unique())
+    if not email_log_df.empty:
+        weeks_set.update(email_log_df["week_start"].dropna().unique())
+
+    all_week_dates = sorted(
+        [pd.Timestamp(w).date() for w in weeks_set],
+        reverse=False,
+    )
+
+    if not all_week_dates:
+        st.info("No week data available yet.")
+        st.stop()
+
+    # --- Filters ---
+    filtered_week_dates = _period_filter(all_week_dates, "compliance")
+    filtered_week_strs  = [str(w) for w in filtered_week_dates]
+
+    col_f1, col_f2 = st.columns(2)
+    dm_options = sorted(ref_data["dm"].dropna().unique().tolist()) if not ref_data.empty else []
+    with col_f1:
+        dm_filter = st.selectbox("Filter by DM", ["All"] + dm_options, key="compliance_dm")
+    with col_f2:
+        status_filter = st.selectbox(
+            "Filter by GM Status", ["All", "On Time", "Late", "Never Submitted"],
+            key="compliance_status",
+        )
+
+    # --- Build compliance rows ---
+    stores = (
+        ref_data[["location_id", "store_name", "dm"]].drop_duplicates()
+        if not ref_data.empty
+        else pd.DataFrame(columns=["location_id", "store_name", "dm"])
+    )
+
+    compliance_rows = []
+
+    for week_str in filtered_week_strs:
+        try:
+            week_date = pd.Timestamp(week_str).date()
+        except Exception:
+            continue
+
+        # Week starts Thursday; +5 days = Tuesday, +6 = Wednesday
+        gm_deadline  = datetime(week_date.year, week_date.month, week_date.day) + timedelta(days=5, hours=8)
+        dm_deadline  = datetime(week_date.year, week_date.month, week_date.day) + timedelta(days=6, hours=8)
+
+        week_log  = email_log_df[email_log_df["week_start"] == week_str].copy() if not email_log_df.empty else pd.DataFrame()
+        week_subs = all_subs[all_subs["week_start"] == week_str].copy() if not all_subs.empty else pd.DataFrame()
+
+        for _, store_row in stores.iterrows():
+            loc_id     = store_row["location_id"]
+            store_name = store_row["store_name"]
+            dm_name    = store_row.get("dm", "")
+
+            if dm_filter != "All" and dm_name != dm_filter:
+                continue
+
+            # ── Email log for this store ──────────────────────────────────
+            store_log = week_log[week_log["location_id"] == loc_id] if not week_log.empty else pd.DataFrame()
+            if not store_log.empty and "email_type" in store_log.columns:
+                initial_sent   = (store_log["email_type"] == "initial").any()
+                reminder_count = int((store_log["email_type"].isin(["tuesday", "wednesday"])).sum())
+            else:
+                initial_sent   = False
+                reminder_count = 0
+
+            # ── Submission for this store ─────────────────────────────────
+            store_sub = week_subs[week_subs["location_id"] == loc_id] if not week_subs.empty else pd.DataFrame()
+
+            if store_sub.empty:
+                gm_status      = "Never Submitted"
+                gm_on_time     = False
+                submitted_str  = ""
+                final_status   = "Pending GM"
+                approved_str   = ""
+                dm_on_time_val = False
+            else:
+                sub = store_sub.iloc[0]
+                final_status = sub.get("status", "")
+                if isinstance(final_status, str):
+                    final_status = final_status.replace("_", " ").title()
+
+                submitted_at = sub.get("submitted_at")
+                if submitted_at:
+                    try:
+                        sub_dt        = pd.Timestamp(submitted_at).to_pydatetime().replace(tzinfo=None)
+                        submitted_str = str(submitted_at)[:16]
+                        gm_on_time    = sub_dt < gm_deadline
+                        gm_status     = "On Time" if gm_on_time else "Late"
+                    except Exception:
+                        submitted_str = str(submitted_at)[:16]
+                        gm_status     = "Unknown"
+                        gm_on_time    = False
+                else:
+                    submitted_str = ""
+                    gm_status     = "Never Submitted"
+                    gm_on_time    = False
+
+                approved_at = sub.get("admin_approved_at")
+                if approved_at:
+                    try:
+                        app_dt        = pd.Timestamp(approved_at).to_pydatetime().replace(tzinfo=None)
+                        approved_str  = str(approved_at)[:16]
+                        dm_on_time_val = app_dt < dm_deadline
+                    except Exception:
+                        approved_str   = str(approved_at)[:16]
+                        dm_on_time_val = False
+                else:
+                    approved_str   = ""
+                    dm_on_time_val = False
+
+            if status_filter != "All" and gm_status != status_filter:
+                continue
+
+            compliance_rows.append({
+                "Week":               week_str,
+                "Store":              store_name,
+                "DM":                 dm_name,
+                "Initial Email Sent": "✅" if initial_sent else "—",
+                "Reminders Sent":     reminder_count,
+                "GM Submitted At":    submitted_str,
+                "GM Status":          gm_status,
+                "Final Status":       final_status,
+                "Approved At":        approved_str,
+                "DM Approved On Time": "✅" if dm_on_time_val else ("—" if not approved_str else "❌"),
+                # Raw booleans for DM rollup
+                "_gm_on_time":        gm_on_time,
+                "_dm_on_time":        dm_on_time_val,
+            })
+
+    if not compliance_rows:
+        st.info("No compliance data matches the selected filters.")
+        st.stop()
+
+    compliance_df = pd.DataFrame(compliance_rows)
+
+    # --- Summary Metrics ---
+    total    = len(compliance_df)
+    on_time  = int((compliance_df["GM Status"] == "On Time").sum())
+    late     = int((compliance_df["GM Status"] == "Late").sum())
+    never    = int((compliance_df["GM Status"] == "Never Submitted").sum())
+    avg_rem  = compliance_df["Reminders Sent"].mean()
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Total Stores",     total)
+    m2.metric("On Time",          f"{on_time} ({on_time / total * 100:.0f}%)")
+    m3.metric("Late",             f"{late} ({late / total * 100:.0f}%)")
+    m4.metric("Never Submitted",  f"{never} ({never / total * 100:.0f}%)")
+    m5.metric("Avg Reminders",    f"{avg_rem:.1f}")
+
+    st.divider()
+
+    # --- GM Detail Table ---
+    st.subheader("GM Submission Detail")
+    display_cols = [
+        "Week", "Store", "DM", "Initial Email Sent", "Reminders Sent",
+        "GM Submitted At", "GM Status", "Final Status",
+        "Approved At", "DM Approved On Time",
+    ]
+    st.dataframe(compliance_df[display_cols], use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # --- DM Portfolio Rollup ---
+    st.subheader("DM Portfolio Summary")
+    dm_rollup = (
+        compliance_df.groupby("DM")
+        .agg(
+            Stores          = ("Store",       "count"),
+            On_Time         = ("_gm_on_time", "sum"),
+            Late            = ("GM Status",   lambda x: (x == "Late").sum()),
+            Never_Submitted = ("GM Status",   lambda x: (x == "Never Submitted").sum()),
+            Total_Reminders = ("Reminders Sent", "sum"),
+            DM_On_Time      = ("_dm_on_time", "sum"),
+        )
+        .reset_index()
+    )
+    dm_rollup["On Time %"] = (
+        (dm_rollup["On_Time"] / dm_rollup["Stores"] * 100)
+        .round(0).astype(int).astype(str) + "%"
+    )
+    dm_rollup = dm_rollup.rename(columns={
+        "On_Time":         "On Time",
+        "Never_Submitted": "Never Submitted",
+        "Total_Reminders": "Total Reminders",
+        "DM_On_Time":      "DM Approved On Time",
+    })
+    rollup_cols = ["DM", "Stores", "On Time", "Late", "Never Submitted",
+                   "On Time %", "Total Reminders", "DM Approved On Time"]
+    st.dataframe(dm_rollup[rollup_cols], use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # --- Excel Export (only generated on click) ---
+    st.subheader("Export")
+    st.caption("Click the button below to generate the Excel file — it is not built automatically to keep the page fast.")
+    if st.button("📥 Generate Excel Report", type="primary"):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            # Sheet 1: GM Detail
+            compliance_df[display_cols].to_excel(writer, sheet_name="GM Compliance", index=False)
+            # Sheet 2: DM Rollup
+            dm_rollup[rollup_cols].to_excel(writer, sheet_name="DM Summary", index=False)
+
+            workbook   = writer.book
+            hdr_fmt    = workbook.add_format({
+                "bold": True, "bg_color": "#2B3A4E",
+                "font_color": "#FFFFFF", "border": 1,
+            })
+            on_time_fmt = workbook.add_format({"bg_color": "#D5F5E3"})
+            late_fmt    = workbook.add_format({"bg_color": "#FADBD8"})
+
+            for sheet_name in ["GM Compliance", "DM Summary"]:
+                ws = writer.sheets[sheet_name]
+                ws.set_row(0, 18, hdr_fmt)
+                ws.set_column("A:Z", 18)
+
+        output.seek(0)
+        period_label = (
+            f"{filtered_week_strs[0]}_to_{filtered_week_strs[-1]}"
+            if len(filtered_week_strs) > 1
+            else (filtered_week_strs[0] if filtered_week_strs else "all")
+        )
+        st.download_button(
+            label="⬇️ Download Excel",
+            data=output,
+            file_name=f"compliance_report_{period_label}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
