@@ -2487,7 +2487,7 @@ elif page == "Compliance Report":
         .reset_index()
     )
     dm_rollup["On Time %"] = (
-        (dm_rollup["On_Time"] / dm_rollup["Stores"] * 100)
+        (dm_rollup["On_Time"].astype(float) / dm_rollup["Stores"].astype(float) * 100)
         .round(0).astype(int).astype(str) + "%"
     )
     dm_rollup = dm_rollup.rename(columns={
@@ -2710,8 +2710,8 @@ elif page == "Rev Band Report":
         Under       = ("Result",        lambda x: (x == "Under").sum()),
         Avg_Variance= ("_variance_raw", "mean"),
     ).reset_index()
-    dm_grp["On Time %"]     = (dm_grp["On_Target"] / dm_grp["Stores"] * 100).round(0).astype(int).astype(str) + "%"
-    dm_grp["Avg $ Variance"]= dm_grp["Avg_Variance"].apply(lambda v: f"${v:+,.0f}")
+    dm_grp["On Time %"]     = (dm_grp["On_Target"].astype(float) / dm_grp["Stores"].astype(float) * 100).round(0).astype(int).astype(str) + "%"
+    dm_grp["Avg $ Variance"]= dm_grp["Avg_Variance"].astype(float).apply(lambda v: f"${v:+,.0f}")
     dm_grp = dm_grp.rename(columns={"On_Target": "On Target"})
 
     st.dataframe(
