@@ -359,7 +359,7 @@ def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_da
     ranked = df.copy()
     ranked["labor_pct"] = ranked["loaded_payroll"] / ranked["Last Week Net Sales"].replace(0, float("nan"))
     ranked["labor_pct"] = ranked["labor_pct"].fillna(0)
-    ranked = ranked.sort_values("Variance", ascending=True).reset_index(drop=True)
+    ranked = ranked.assign(_abs_var=ranked["Variance"].abs()).sort_values("_abs_var").drop(columns=["_abs_var"]).reset_index(drop=True)
 
     for rank_idx, row in ranked.iterrows():
         rn = rank_idx + 3
