@@ -401,9 +401,9 @@ def main():
         actual_sos = float(store_sos['good_shift'].mean()) if len(store_sos) else None
 
         # Error metrics
-        fc_point = float(fc['forecast_point']) if fc.get('forecast_point') else None
-        fc_low   = float(fc['forecast_low'])   if fc.get('forecast_low')   else None
-        fc_high  = float(fc['forecast_high'])  if fc.get('forecast_high')  else None
+        fc_point = float(fc['forecast_point']) if fc.get('forecast_point') is not None else None
+        fc_low   = float(fc['forecast_low'])   if fc.get('forecast_low')   is not None else None
+        fc_high  = float(fc['forecast_high'])  if fc.get('forecast_high')  is not None else None
         rec_band = fc.get('recommended_band')
 
         forecast_error     = round(actual_sales - fc_point, 2) if actual_sales and fc_point else None

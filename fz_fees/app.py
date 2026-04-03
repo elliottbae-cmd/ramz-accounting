@@ -625,7 +625,7 @@ def render_nav_section(header, section_key, use_expander=False):
 # --- Sidebar logo ---
 _LOGO_PATH = _FZ_DIR / "ramz_logo.png"
 if _LOGO_PATH.exists():
-    st.sidebar.image(str(_LOGO_PATH), use_container_width=True)
+    st.sidebar.image(str(_LOGO_PATH), width=220)
     st.sidebar.markdown("---")
 
 render_nav_section("Accounting", "accounting", use_expander=True)
@@ -844,10 +844,10 @@ if page == "FZ Fee Reconciliation":
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                use_container_width=True)
         with dl_col2:
-            inv = st.session_state["invoices"][0]
+            _inv_fname = st.session_state["invoices"][0][1] if st.session_state.get("invoices") else "invoices.csv"
             st.download_button(label="Download Invoice CSV",
                                data=st.session_state["invoice_csv"],
-                               file_name=inv[1], mime="text/csv", use_container_width=True)
+                               file_name=_inv_fname, mime="text/csv", use_container_width=True)
 
 
 
@@ -3444,9 +3444,9 @@ elif page == "Sales Forecasts":
                     actual_gas = float(past_gas['price_per_gallon'].iloc[-1])
 
             # Error metrics
-            fc_point = float(fc['forecast_point']) if fc.get('forecast_point') else None
-            fc_low   = float(fc['forecast_low'])   if fc.get('forecast_low')   else None
-            fc_high  = float(fc['forecast_high'])  if fc.get('forecast_high')  else None
+            fc_point = float(fc['forecast_point']) if fc.get('forecast_point') is not None else None
+            fc_low   = float(fc['forecast_low'])   if fc.get('forecast_low')   is not None else None
+            fc_high  = float(fc['forecast_high'])  if fc.get('forecast_high')  is not None else None
             rec_band = fc.get('recommended_band')
 
             forecast_error     = round(actual_sales - fc_point, 2) if actual_sales and fc_point else None

@@ -89,7 +89,7 @@ print(f'  {"Store":<35} {"MAE":>8} {"MAPE":>8} {"Days":>6}')
 print('  ' + '-'*60)
 store_results = []
 for loc_id, grp in val_open.groupby('location_id'):
-    store_name = df[df['location_id'] == loc_id]['location_id'].iloc[0]
+    store_name = loc_id  # location_id used as display label in per-store printout
     mae  = mean_absolute_error(grp['net_sales'], grp['predicted'])
     mape = mean_absolute_percentage_error(grp['net_sales'], grp['predicted'])
     store_results.append({'location_id': loc_id, 'mae': mae, 'mape': mape, 'n': len(grp)})

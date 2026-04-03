@@ -98,7 +98,7 @@ def get_email_mode():
 
 # ── Data loaders (direct Supabase, no Streamlit) ─────────────────────────────
 def load_reference_data():
-    resp = sb.table("reference_data").select("*").order("location_id").execute()
+    resp = sb.table("reference_data").select("*").eq("active", True).order("location_id").execute()
     return resp.data or []
 
 
