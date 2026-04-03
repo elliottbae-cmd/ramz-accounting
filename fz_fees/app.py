@@ -3486,13 +3486,22 @@ elif page == "Sales Forecasts":
 
     # ── Week selector ──────────────────────────────────────────────────────────
     selected_fc_week = st.selectbox(
-        "Forecast week (Monday start)",
+        "Model Output Date (week starting)",
         fc_weeks,
+        format_func=lambda w: f"Week of {date.fromisoformat(w).strftime('%-m/%-d/%y')}",
         key="sf_week_select",
     )
 
     # ── Forecast table for selected week ───────────────────────────────────────
-    st.subheader(f"Forecasts — week of {selected_fc_week}")
+    try:
+        _fc_mon  = date.fromisoformat(selected_fc_week)
+        _fc_sun  = _fc_mon + timedelta(days=6)
+        _fc_label = f"{_fc_mon.strftime('%-m/%-d')} – {_fc_sun.strftime('%-m/%-d/%y')}"
+    except Exception:
+        _fc_label = selected_fc_week
+
+    st.markdown(f"**Model Output Date:** week of {date.fromisoformat(selected_fc_week).strftime('%-m/%-d/%y') if selected_fc_week else ''}")
+    st.subheader(f"Sales Forecast: {_fc_label}")
     try:
         fc_resp = sb.table("sales_forecasts").select(
             "location_id,store_name,recommended_band,forecast_low,forecast_point,"
