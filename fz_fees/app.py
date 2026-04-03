@@ -37,7 +37,7 @@ from weekly_lock import (
 from supabase_db import (
     load_stores, save_store, delete_store,
     load_reference_data, load_band_goals, load_dm_list,
-    save_reference_data_row, save_reference_data_bulk, delete_reference_data,
+    save_reference_data_row, save_reference_data_bulk, delete_reference_data, set_store_active,
     save_band_goals, add_dm, remove_dm as db_remove_dm,
     load_all_locks, delete_week_lock, log_change,
     load_locked_config, lock_exists, create_lock, get_locked_weeks,
@@ -1836,8 +1836,52 @@ elif page == "DM Assignments":
 
     st.divider()
 
+    # --- Store Active / Inactive Toggle ---
+    st.subheader("Active Stores")
+    st.caption("Inactive stores are excluded from all AVS reports. Use this to remove stores that are closed, corporate, or not yet part of tracking.")
+
+    # Load ALL stores (including inactive) for admin management
+    all_ref_df = load_reference_data(active_only=False).sort_values("location_id").reset_index(drop=True)
+
+    if all_ref_df.empty:
+        st.error("No reference data found.")
+        st.stop()
+
+    active_changes = {}
+    hdr1, hdr2, hdr3, hdr4 = st.columns([2, 4, 2, 2])
+    hdr1.markdown("**Store #**")
+    hdr2.markdown("**Store Name**")
+    hdr3.markdown("**DM**")
+    hdr4.markdown("**Active in Reports**")
+
+    for _, row in all_ref_df.iterrows():
+        c1, c2, c3, c4 = st.columns([2, 4, 2, 2])
+        c1.text(row["location_id"])
+        c2.text(row["store_name"])
+        c3.text(row.get("dm", "") or "")
+        is_active = bool(row.get("active", True))
+        toggled = c4.checkbox(
+            "Active",
+            value=is_active,
+            key=f"active_{row['location_id']}",
+            label_visibility="collapsed",
+        )
+        if toggled != is_active:
+            active_changes[row["location_id"]] = toggled
+
+    if active_changes:
+        if st.button("Save Active Status", type="primary"):
+            for store_id, new_active in active_changes.items():
+                set_store_active(store_id, new_active)
+            st.success("Store active status updated.")
+            st.cache_data.clear()
+            st.rerun()
+
+    st.divider()
+
     # --- Store-to-DM Assignment ---
     st.subheader("Store-to-DM Assignments")
+    st.caption("Only active stores are shown here.")
 
     ref_df = _cached_reference_data()
     if ref_df.empty:

@@ -57,13 +57,26 @@ def delete_store(location_id):
         raise
 
 
-def load_reference_data():
-    """Load store reference data. Returns DataFrame with location_id, store_name, dm, revenue_band."""
+def load_reference_data(active_only=True):
+    """Load store reference data. Returns DataFrame with location_id, store_name, dm, revenue_band, active.
+
+    active_only=True (default) returns only stores where active=true (or active IS NULL, for
+    backwards-compatibility before the column existed). Pass active_only=False to get all stores.
+    """
     sb = get_supabase()
     resp = sb.table("reference_data").select("*").order("location_id").execute()
-    if resp.data:
-        return pd.DataFrame(resp.data)
-    return pd.DataFrame(columns=["location_id", "store_name", "dm", "revenue_band"])
+    if not resp.data:
+        return pd.DataFrame(columns=["location_id", "store_name", "dm", "revenue_band", "active"])
+    df = pd.DataFrame(resp.data)
+    # Ensure 'active' column exists (graceful degradation if column not yet added)
+    if "active" not in df.columns:
+        df["active"] = True
+    else:
+        # Treat NULL as True (active by default)
+        df["active"] = df["active"].fillna(True).astype(bool)
+    if active_only:
+        df = df[df["active"]].reset_index(drop=True)
+    return df
 
 
 def save_reference_data_row(location_id, store_name, dm, revenue_band):
@@ -81,11 +94,24 @@ def save_reference_data_row(location_id, store_name, dm, revenue_band):
         raise
 
 
+def set_store_active(location_id, active: bool):
+    """Set the active flag for a single store in reference_data."""
+    try:
+        sb = get_supabase()
+        sb.table("reference_data").update({"active": active}).eq("location_id", location_id).execute()
+    except Exception as e:
+        logger.error(f"Failed to set active={active} for {location_id}: {e}")
+        raise
+
+
 def save_reference_data_bulk(df):
     """Upsert all rows from a DataFrame into reference_data."""
     try:
         sb = get_supabase()
-        records = df[["location_id", "store_name", "dm", "revenue_band"]].to_dict("records")
+        cols = ["location_id", "store_name", "dm", "revenue_band"]
+        if "active" in df.columns:
+            cols.append("active")
+        records = df[cols].to_dict("records")
         sb.table("reference_data").upsert(records).execute()
     except Exception as e:
         logger.error(f"Failed to bulk save reference data: {e}")
