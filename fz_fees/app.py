@@ -915,6 +915,11 @@ elif page == "Prior Week's Reports":
                 labor_pct = pd.to_numeric(merged.get("labor_pct", 0), errors="coerce").fillna(0)
                 archive_df["loaded_payroll"] = labor_pct * archive_df["Last Week Net Sales"]
 
+                # Exclude stores with no activity — matches the weekly report engine filter
+                archive_df = archive_df[
+                    (archive_df["actual_hours"] > 0) | (archive_df["Last Week Net Sales"] > 0)
+                ].reset_index(drop=True)
+
                 st.session_state["archive_df"] = archive_df
                 st.session_state["archive_week_label"] = week_labels.get(selected_archive_week, selected_archive_week)
 
@@ -1085,7 +1090,12 @@ elif page == "AVS Performance - Store Level":
 
     # --- Filter by Store and DM ---
     week_strs = [str(w) for w in filtered_weeks]
-    perf_data = all_locks[all_locks["week_start"].isin(week_strs)].copy()
+    # Only include active stores (matches the weekly report engine)
+    _active_store_ids = set(_cached_reference_data()["location_id"].tolist())
+    perf_data = all_locks[
+        all_locks["week_start"].isin(week_strs) &
+        all_locks["location_id"].isin(_active_store_ids)
+    ].copy()
     perf_data["hourly_goal"] = pd.to_numeric(perf_data["hourly_goal"], errors="coerce").fillna(0)
 
     col_dm_filter, col_store_filter = st.columns(2)
@@ -1260,7 +1270,12 @@ elif page == "AVS Performance - DMs":
 
     # --- Filter by DM ---
     week_strs = [str(w) for w in filtered_weeks]
-    perf_data = all_locks[all_locks["week_start"].isin(week_strs)].copy()
+    # Only include active stores (mirrors weekly report engine)
+    _active_store_ids_dm = set(_cached_reference_data()["location_id"].tolist())
+    perf_data = all_locks[
+        all_locks["week_start"].isin(week_strs) &
+        all_locks["location_id"].isin(_active_store_ids_dm)
+    ].copy()
     perf_data["hourly_goal"] = pd.to_numeric(perf_data["hourly_goal"], errors="coerce").fillna(0)
 
     dm_list = sorted(perf_data["dm"].dropna().unique().tolist())
