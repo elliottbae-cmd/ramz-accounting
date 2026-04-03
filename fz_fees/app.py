@@ -28,7 +28,7 @@ from reconcile import (
     load_bank_data, reconcile, generate_invoices, write_report,
 )
 from avs_engine import (
-    generate_weekly_report, generate_midweek_report,
+    generate_weekly_report, generate_midweek_report, generate_archive_excel,
 )
 from weekly_lock import (
     get_week_start, get_next_week_start, format_week_label,
@@ -922,13 +922,14 @@ elif page == "Prior Week's Reports":
             st.markdown(f"**{st.session_state['archive_week_label']}**")
             _render_weekly_preview(st.session_state["archive_df"])
 
-            buf = BytesIO()
-            st.session_state["archive_df"].to_excel(buf, index=False, engine="openpyxl")
-            buf.seek(0)
+            archive_label = st.session_state["archive_week_label"]
+            archive_buf, _ = generate_archive_excel(
+                st.session_state["archive_df"], archive_label
+            )
             st.download_button(
                 "📥 Export to Excel",
-                data=buf.getvalue(),
-                file_name=f"AVS_Archive_{st.session_state['archive_week_label'].replace(' ', '_')}.xlsx",
+                data=archive_buf,
+                file_name=f"AVS_Archive_{archive_label.replace(' ', '_').replace('–', '-')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )

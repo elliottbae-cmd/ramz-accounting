@@ -196,15 +196,12 @@ def _build_merged_df(ref_data, band_goals, pagg, sales=None):
 # REPORT GENERATORS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_dates):
+def _write_weekly_excel(df, report_dates):
     """
-    Generate the full weekly AVS Labor Report (3 tabs).
-    Returns BytesIO with the Excel workbook.
+    Write the formatted 3-tab AVS Weekly Labor Report Excel workbook from a
+    pre-built DataFrame. Returns (BytesIO, df).
+    Called by both generate_weekly_report() and generate_archive_excel().
     """
-    raw_payroll = preprocess_adp_csv(adp_file)
-    pagg = _aggregate_payroll(raw_payroll, include_wages=True)
-    sales = load_net_sales(sales_file)
-    df = _build_merged_df(ref_data, band_goals, pagg, sales=sales)
 
     wb = Workbook()
 
@@ -470,6 +467,27 @@ def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_da
     buf.seek(0)
     return buf, df
 
+
+def generate_weekly_report(adp_file, sales_file, ref_data, band_goals, report_dates):
+    """
+    Generate the full weekly AVS Labor Report from raw uploaded files.
+    Processes ADP + sales files, builds the merged DataFrame, then writes
+    the formatted Excel. Returns (BytesIO, df).
+    """
+    raw_payroll = preprocess_adp_csv(adp_file)
+    pagg = _aggregate_payroll(raw_payroll, include_wages=True)
+    sales = load_net_sales(sales_file)
+    df = _build_merged_df(ref_data, band_goals, pagg, sales=sales)
+    return _write_weekly_excel(df, report_dates)
+
+
+def generate_archive_excel(df, report_dates):
+    """
+    Generate the same formatted 3-tab Excel from a pre-built DataFrame
+    (used by Prior Week's Reports to export with full formatting).
+    Returns (BytesIO, df).
+    """
+    return _write_weekly_excel(df, report_dates)
 
 
 # ---------------------------------------------------------------------------
