@@ -139,15 +139,54 @@ _NAME_OVERRIDES = {"denton   teasley tx": "denton tx"}
 
 
 def load_net_sales(uploaded_file) -> pd.DataFrame:
-    """Read End_Of_Week_Net_Sales Excel, return normalized DataFrame."""
-    sales_raw = pd.read_excel(uploaded_file)
-    sales = sales_raw[["Restaurant", "Last Week Net Sales"]].copy()
-    sales = sales[
-        ~sales["Restaurant"].str.contains(
-            "Net Sale Averages|Stillwater- OSU", na=False
+    """Read End_Of_Week_Net_Sales Excel, return normalized DataFrame.
+
+    Handles two formats:
+    - Standard:  headers row 1, columns 'Restaurant' + 'Last Week Net Sales'
+    - Alternate: headers row 3, columns 'Store Number' + 'Store' + 'Sales [date range]'
+                 Uses store number for matching (more reliable than name matching).
+    Returns a DataFrame with at minimum 'Last Week Net Sales' and either
+    'norm' (standard) or 'store_num' (alternate) for the merge key.
+    """
+    sales_raw = pd.read_excel(uploaded_file, header=0)
+
+    if "Restaurant" in sales_raw.columns and "Last Week Net Sales" in sales_raw.columns:
+        # Standard format
+        sales = sales_raw[["Restaurant", "Last Week Net Sales"]].copy()
+        sales = sales[
+            ~sales["Restaurant"].str.contains(
+                "Net Sale Averages|Stillwater- OSU", na=False
+            )
+        ]
+        sales["norm"] = sales["Restaurant"].apply(_normalize).replace(_NAME_OVERRIDES)
+        return sales
+
+    # Alternate format — headers are on row 3 (skiprows=2 / header=2)
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+    sales_raw = pd.read_excel(uploaded_file, header=2)
+
+    store_num_col = next(
+        (c for c in sales_raw.columns if "store number" in str(c).lower() or "store #" in str(c).lower()),
+        None,
+    )
+    sales_col = next(
+        (c for c in sales_raw.columns if str(c).strip().lower().startswith("sales")),
+        None,
+    )
+
+    if store_num_col is None or sales_col is None:
+        raise ValueError(
+            f"Unrecognized sales file format. Expected 'Restaurant'/'Last Week Net Sales' "
+            f"or 'Store Number'/'Sales ...' columns. Found: {list(sales_raw.columns)}"
         )
-    ]
-    sales["norm"] = sales["Restaurant"].apply(_normalize).replace(_NAME_OVERRIDES)
+
+    sales = sales_raw[[store_num_col, sales_col]].copy()
+    sales = sales.dropna(subset=[store_num_col])
+    sales[store_num_col] = sales[store_num_col].astype(str).str.strip()
+    sales = sales[sales[store_num_col] != ""]
+    sales = sales.rename(columns={store_num_col: "store_num", sales_col: "Last Week Net Sales"})
+    sales["Last Week Net Sales"] = pd.to_numeric(sales["Last Week Net Sales"], errors="coerce").fillna(0)
     return sales
 
 
@@ -170,8 +209,18 @@ def _build_merged_df(ref_data, band_goals, pagg, sales=None):
     dm["Hourly Goal"] = dm["Rev Band"].map(band_goals)
 
     if sales is not None:
-        dm["norm"] = dm["Store Name"].apply(_normalize)
-        dm = dm.merge(sales[["norm", "Last Week Net Sales"]], on="norm", how="left")
+        if "store_num" in sales.columns:
+            # Alternate format: join directly on store number — no name-matching needed
+            dm = dm.merge(
+                sales[["store_num", "Last Week Net Sales"]],
+                left_on="Store #",
+                right_on="store_num",
+                how="left",
+            ).drop(columns=["store_num"], errors="ignore")
+        else:
+            # Standard format: join on normalized store name
+            dm["norm"] = dm["Store Name"].apply(_normalize)
+            dm = dm.merge(sales[["norm", "Last Week Net Sales"]], on="norm", how="left")
 
     dm = dm.merge(
         pagg.rename(columns={"total_hours": "actual_hours"})[
