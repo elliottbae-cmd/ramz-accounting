@@ -1101,37 +1101,32 @@ elif page == "AVS Performance - Store Level":
 
     week_strs_set = set(week_strs)
 
-    # Merge lock data (store_name, dm) with actuals (actual_hours, variance)
+    # Filter actuals to the selected period
     if not actuals.empty:
         actuals_filtered = actuals[actuals["week_start"].isin(week_strs_set)].copy()
     else:
         actuals_filtered = pd.DataFrame(columns=["week_start", "location_id", "actual_hours", "variance"])
 
-    # Build variance pivot: stores as rows, weeks as columns
-    # Use lock data for store list, actuals for values
-    store_info = perf_data[["location_id", "store_name"]].drop_duplicates()
-
-    # Merge actuals with store names
+    # Build pivot using locked config as the backbone so ALL weeks in the
+    # selected period always appear as columns — actuals filled in where available,
+    # 0 where no report has been run yet for that week.
+    grid = perf_data[["week_start", "location_id", "store_name"]].drop_duplicates()
     if not actuals_filtered.empty:
-        display_data = actuals_filtered.merge(store_info, on="location_id", how="inner")
+        grid = grid.merge(
+            actuals_filtered[["week_start", "location_id", "variance"]],
+            on=["week_start", "location_id"],
+            how="left",
+        )
     else:
-        # No actuals yet — show all stores with 0
-        display_data = perf_data[["week_start", "location_id", "store_name"]].copy()
-        display_data["variance"] = 0
+        grid["variance"] = 0.0
+    grid["variance"] = grid["variance"].fillna(0.0)
 
-    # Pivot variance by store x week
-    if not display_data.empty and "variance" in display_data.columns:
-        pivot = display_data.pivot_table(
-            index="store_name",
-            columns="week_start",
-            values="variance",
-            aggfunc="first",
-        ).fillna(0).reset_index()
-    else:
-        pivot = pd.DataFrame({"store_name": store_info["store_name"].unique()})
-        for ws in week_strs:
-            pivot[ws] = 0
-        pivot = pivot.reset_index(drop=True)
+    pivot = grid.pivot_table(
+        index="store_name",
+        columns="week_start",
+        values="variance",
+        aggfunc="first",
+    ).fillna(0).reset_index()
 
     pivot.columns.name = None
     pivot = pivot.rename(columns={"store_name": "Store"})
