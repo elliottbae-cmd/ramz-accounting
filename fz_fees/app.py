@@ -580,6 +580,7 @@ ALL_PAGES = {
         "Admin Users",
         "Upload SoS",
         "Upload VOTG",
+        "Sales Forecasts",
     ],
 }
 
@@ -3346,3 +3347,247 @@ elif page == "Upload VOTG":
             st.info("No VOTG data uploaded for this week yet.")
     except Exception:
         st.info("No VOTG data uploaded for this week yet.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Sales Forecasts  (Admin)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Sales Forecasts":
+    if not user_is_admin:
+        st.error("You do not have permission to access this page.")
+        st.stop()
+
+    st.title("📈 Sales Forecasts")
+    st.caption("View weekly store forecasts and run manual back-tests for weeks where all three uploads are complete.")
+
+    from supabase_db import get_supabase as _get_sb
+
+    _SF_STATE_MAP = {
+        '112-0001': 'OK', '112-0002': 'OK', '112-0003': 'OK', '112-0004': 'OK',
+        '112-0005': 'OK', '112-0031': 'OK', '112-0035': 'OK', '112-0038': 'OK',
+        '112-0006': 'TX', '112-0007': 'TX', '112-0008': 'TX', '112-0009': 'TX',
+        '112-0010': 'TX', '112-0011': 'TX', '112-0032': 'TX', '112-0033': 'TX',
+        '112-0034': 'TX', '112-0036': 'TX', '112-0037': 'TX',
+        '112-0012': 'OH', '112-0013': 'OH', '112-0014': 'OH', '112-0015': 'OH',
+        '112-0016': 'OH', '112-0017': 'OH', '112-0018': 'OH', '112-0019': 'OH',
+        '112-0020': 'OH', '112-0021': 'OH', '112-0022': 'OH', '112-0023': 'OH',
+        '112-0024': 'OH', '112-0025': 'OH', '112-0026': 'OH', '112-0028': 'OH',
+        '112-0029': 'OH', '112-0030': 'OH',
+        '112-0027': 'KY',
+    }
+
+    _SF_BANDS = [
+        ('<25k',    0,     25000),
+        ('25k-30k', 25000, 30000),
+        ('30k-35k', 30000, 35000),
+        ('35k-40k', 35000, 40000),
+        ('40k-45k', 40000, 45000),
+        ('45k-50k', 45000, 50000),
+        ('50k+',    50000, 9_999_999),
+    ]
+
+    def _sf_get_band(sales):
+        for name, lo, hi in _SF_BANDS:
+            if lo <= sales < hi:
+                return name
+        return '50k+'
+
+    def _run_backtest_for_week(week_monday_str: str):
+        """Back-fill actuals onto forecast rows for a given Monday week_start."""
+        sb = _get_sb()
+        wk_start = pd.Timestamp(week_monday_str)
+        wk_end   = wk_start + timedelta(days=6)
+
+        fc_resp = sb.table("sales_forecasts").select("*").eq("week_start", week_monday_str).execute()
+        forecast_rows = fc_resp.data or []
+        if not forecast_rows:
+            return 0, "No forecast rows found for this week."
+
+        # Load gas prices once
+        gas_resp = sb.table("gas_price_history").select("state,week_start,price_per_gallon").execute()
+        gas_df = pd.DataFrame(gas_resp.data or [])
+        if not gas_df.empty:
+            gas_df['week_start'] = pd.to_datetime(gas_df['week_start'])
+            gas_df['price_per_gallon'] = pd.to_numeric(gas_df['price_per_gallon'], errors='coerce')
+
+        updated = 0
+        for fc in forecast_rows:
+            loc_id = fc['location_id']
+
+            # Actual sales
+            s_resp = sb.table("store_sales").select("net_sales").eq(
+                "location_id", loc_id
+            ).gte("sale_date", str(wk_start.date())).lte("sale_date", str(wk_end.date())).execute()
+            actual_sales = sum(float(r['net_sales']) for r in s_resp.data) if s_resp.data else None
+
+            # Actual weather
+            w_resp = sb.table("weather_history").select(
+                "temp_high_f,temp_low_f,precipitation_in"
+            ).eq("location_id", loc_id).eq("is_forecast", False).gte(
+                "date", str(wk_start.date())
+            ).lte("date", str(wk_end.date())).execute()
+            if w_resp.data:
+                wdf = pd.DataFrame(w_resp.data)
+                actual_temp_high = float(pd.to_numeric(wdf['temp_high_f'], errors='coerce').mean())
+                actual_temp_low  = float(pd.to_numeric(wdf['temp_low_f'],  errors='coerce').mean())
+                actual_precip    = float(pd.to_numeric(wdf['precipitation_in'], errors='coerce').sum())
+            else:
+                actual_temp_high = actual_temp_low = actual_precip = None
+
+            # Actual gas
+            actual_gas = None
+            if not gas_df.empty:
+                state = _SF_STATE_MAP.get(loc_id, 'OH')
+                state_gas = gas_df[gas_df['state'] == state].sort_values('week_start')
+                past_gas  = state_gas[state_gas['week_start'] <= wk_start]
+                if len(past_gas):
+                    actual_gas = float(past_gas['price_per_gallon'].iloc[-1])
+
+            # Error metrics
+            fc_point = float(fc['forecast_point']) if fc.get('forecast_point') else None
+            fc_low   = float(fc['forecast_low'])   if fc.get('forecast_low')   else None
+            fc_high  = float(fc['forecast_high'])  if fc.get('forecast_high')  else None
+            rec_band = fc.get('recommended_band')
+
+            forecast_error     = round(actual_sales - fc_point, 2) if actual_sales and fc_point else None
+            forecast_error_pct = round((forecast_error / actual_sales) * 100, 2) if forecast_error and actual_sales else None
+            band_hit           = (_sf_get_band(actual_sales) == rec_band) if actual_sales and rec_band else None
+            within_ci          = bool(fc_low <= actual_sales <= fc_high) if all([fc_low, fc_high, actual_sales]) else None
+
+            sb.table("sales_forecasts").update({
+                'actual_sales':              actual_sales,
+                'actual_temp_high':          actual_temp_high,
+                'actual_temp_low':           actual_temp_low,
+                'actual_precip':             actual_precip,
+                'actual_gas_price':          actual_gas,
+                'forecast_error':            forecast_error,
+                'forecast_error_pct':        forecast_error_pct,
+                'band_hit':                  band_hit,
+                'within_confidence_interval': within_ci,
+            }).eq("id", fc['id']).execute()
+            updated += 1
+
+        return updated, None
+
+    # ── Load available forecast weeks ──────────────────────────────────────────
+    sb = _get_sb()
+    try:
+        weeks_resp = sb.table("sales_forecasts").select("week_start").execute()
+        fc_weeks = sorted(
+            {r['week_start'] for r in (weeks_resp.data or [])},
+            reverse=True,
+        )
+    except Exception:
+        fc_weeks = []
+
+    if not fc_weeks:
+        st.info("No forecast data yet. Forecasts are generated each Monday morning by the automated job.")
+        st.stop()
+
+    # ── Week selector ──────────────────────────────────────────────────────────
+    selected_fc_week = st.selectbox(
+        "Forecast week (Monday start)",
+        fc_weeks,
+        key="sf_week_select",
+    )
+
+    # ── Forecast table for selected week ───────────────────────────────────────
+    st.subheader(f"Forecasts — week of {selected_fc_week}")
+    try:
+        fc_resp = sb.table("sales_forecasts").select(
+            "location_id,store_name,recommended_band,forecast_low,forecast_point,"
+            "forecast_high,confidence_pct,actual_sales,forecast_error_pct,band_hit"
+        ).eq("week_start", selected_fc_week).order("location_id").execute()
+
+        if fc_resp.data:
+            fc_df = pd.DataFrame(fc_resp.data).rename(columns={
+                "location_id":       "Store #",
+                "store_name":        "Store",
+                "recommended_band":  "Band",
+                "forecast_low":      "Low",
+                "forecast_point":    "Point",
+                "forecast_high":     "High",
+                "confidence_pct":    "Conf %",
+                "actual_sales":      "Actual",
+                "forecast_error_pct":"Error %",
+                "band_hit":          "Band Hit",
+            })
+            for col in ["Low", "Point", "High", "Actual"]:
+                if col in fc_df.columns:
+                    fc_df[col] = fc_df[col].apply(
+                        lambda x: f"${x:,.0f}" if pd.notna(x) and x != "" else "—"
+                    )
+            if "Error %" in fc_df.columns:
+                fc_df["Error %"] = fc_df["Error %"].apply(
+                    lambda x: f"{x:+.1f}%" if pd.notna(x) and x != "" else "—"
+                )
+            if "Band Hit" in fc_df.columns:
+                fc_df["Band Hit"] = fc_df["Band Hit"].apply(
+                    lambda x: "✅" if x is True else ("❌" if x is False else "—")
+                )
+            st.dataframe(fc_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No forecast rows for this week.")
+    except Exception as _e:
+        st.error(f"Could not load forecasts: {_e}")
+
+    # ── Manual back-test ───────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Manual Back-Test")
+    st.caption(
+        "Run this after uploading Sales, SoS, and VOTG for a past week to back-fill "
+        "actual results onto the forecast rows and calculate accuracy metrics."
+    )
+
+    # The weekly_data_status uses Thursday week_start; forecast uses Monday week_start.
+    # Thursday = Monday - 4 days.
+    try:
+        _bt_monday  = date.fromisoformat(selected_fc_week)
+        _bt_thursday = str(_bt_monday - timedelta(days=4))
+    except Exception:
+        _bt_thursday = None
+
+    _bt_status = _get_upload_status(_bt_thursday) if _bt_thursday else {}
+    b1, b2, b3 = st.columns(3)
+    b1.metric("Sales", "✅ Uploaded" if _bt_status.get("sales_uploaded") else "⬜ Pending")
+    b2.metric("SoS",   "✅ Uploaded" if _bt_status.get("sos_uploaded")   else "⬜ Pending")
+    b3.metric("VOTG",  "✅ Uploaded" if _bt_status.get("votg_uploaded")  else "⬜ Pending")
+
+    _all_ready = all([
+        _bt_status.get("sales_uploaded"),
+        _bt_status.get("sos_uploaded"),
+        _bt_status.get("votg_uploaded"),
+    ])
+
+    _already_run = bool(
+        fc_resp.data and any(r.get("actual_sales") is not None for r in fc_resp.data)
+    ) if "fc_resp" in dir() and fc_resp.data else False
+
+    if _already_run:
+        st.success("✅ Back-test already run for this week — actuals are filled in above.")
+        if st.button("Re-run Back-Test", key="bt_rerun"):
+            with st.spinner("Running back-test..."):
+                _n, _err = _run_backtest_for_week(selected_fc_week)
+            if _err:
+                st.error(_err)
+            else:
+                st.success(f"Updated {_n} store forecast rows.")
+                st.cache_data.clear()
+                st.rerun()
+    elif not _all_ready:
+        _missing = [
+            k for k, label in [
+                ("sales_uploaded", "Sales"), ("sos_uploaded", "SoS"), ("votg_uploaded", "VOTG")
+            ] if not _bt_status.get(k)
+        ]
+        st.warning(f"Cannot run back-test — missing uploads: {', '.join(m for _, m in [('sales_uploaded','Sales'),('sos_uploaded','SoS'),('votg_uploaded','VOTG')] if not _bt_status.get(_))}")
+    else:
+        if st.button("▶ Run Back-Test for this week", type="primary", use_container_width=True, key="bt_run"):
+            with st.spinner("Running back-test — this may take a moment..."):
+                _n, _err = _run_backtest_for_week(selected_fc_week)
+            if _err:
+                st.error(_err)
+            else:
+                st.success(f"✅ Back-test complete — updated {_n} store forecast rows.")
+                st.cache_data.clear()
+                st.rerun()
