@@ -1141,8 +1141,15 @@ elif page == "AVS Performance - Store Level":
     for wc in week_cols:
         pivot[wc] = pivot[wc].round(0).astype(int)
 
-    # --- Ranking: closest to goal (absolute variance) ranked first ---
-    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).abs().mean(axis=1).fillna(0)
+    # --- Ranking + Total ---
+    # Multi-week: rank by absolute value of Total variance for the period
+    # Single-week: rank by absolute value of that week
+    if len(week_cols) > 1:
+        period_total = pivot[week_cols].sum(axis=1)
+        pivot["_sort_var"] = period_total.abs()
+    else:
+        pivot["_sort_var"] = pivot[week_cols[0]].abs() if week_cols else 0
+
     pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
     pivot.insert(0, "Rank", range(1, len(pivot) + 1))
     pivot = pivot.drop(columns=["_sort_var"])
@@ -1152,11 +1159,11 @@ elif page == "AVS Performance - Store Level":
     pivot = pivot.rename(columns=week_col_map)
     renamed_week_cols = [week_col_map.get(c, c) for c in week_cols]
 
-    # --- Total column (only when multiple weeks selected) ---
+    # Total column at the end (sum of all weeks shown) — only for multi-week views
     if len(renamed_week_cols) > 1:
         pivot["Total"] = pivot[renamed_week_cols].sum(axis=1)
 
-    # --- Color coding: variance-based (skip Total column) ---
+    # --- Color coding: variance-based (skip non-week columns) ---
     skip_cols = ("Rank", "Store", "Total")
     has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
     styled = pivot.style.apply(
