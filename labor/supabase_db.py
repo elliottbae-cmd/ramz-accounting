@@ -6,7 +6,8 @@ Replaces CSV file operations with Supabase PostgreSQL calls.
 """
 
 import logging
-from datetime import datetime, timezone
+import math
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import streamlit as st
@@ -88,6 +89,7 @@ def save_reference_data_row(location_id, store_name, dm, revenue_band):
             "store_name": store_name,
             "dm": dm,
             "revenue_band": revenue_band,
+            "active": True,  # new stores default to active; use set_store_active() to change
         }).execute()
     except Exception as e:
         logger.error(f"Failed to save reference data for {location_id}: {e}")
@@ -184,10 +186,9 @@ def remove_dm(dm_name):
 # Weekly locks
 # ---------------------------------------------------------------------------
 def load_all_locks(weeks_back=52):
-    """Load recent weekly lock data (locked only, last N weeks). Returns a DataFrame."""
-    from datetime import date as _date, timedelta as _td
+    """Load completed weekly lock data (status=locked, last N weeks). Returns a DataFrame."""
     sb = get_supabase()
-    cutoff = str(_date.today() - _td(days=weeks_back * 7))
+    cutoff = str(date.today() - timedelta(days=weeks_back * 7))
     resp = sb.table("weekly_locks").select(
         "week_start, location_id, store_name, dm, revenue_band, hourly_goal, source, status"
     ).eq("status", "locked").gte("week_start", cutoff).order("week_start").execute()
@@ -388,13 +389,11 @@ def override_locked_value(week_start, location_id, field, new_value):
 
 def get_locked_weeks():
     """Return a sorted list of all week_start dates that have locks."""
-    from datetime import date as date_type
     sb = get_supabase()
-    # Only fetch distinct week_start values with status filter
     resp = sb.table("weekly_locks").select("week_start").eq("status", "locked").execute()
     if resp.data:
         weeks = sorted(set(r["week_start"] for r in resp.data))
-        return [date_type.fromisoformat(w) for w in weeks]
+        return [date.fromisoformat(w) for w in weeks]
     return []
 
 
@@ -483,7 +482,6 @@ def remove_admin(email):
 def _safe_float(val, default=0.0):
     """Convert val to float, substituting default for None / NaN / inf.
     Prevents 'Out of range float values are not JSON compliant' errors."""
-    import math
     try:
         f = float(val)
         return default if not math.isfinite(f) else f

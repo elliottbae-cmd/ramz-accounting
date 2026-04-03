@@ -99,8 +99,10 @@ LOAD_FACTOR = 1 + PAYROLL_TAX_RATE + WORKERS_COMP_RATE  # 1.0865
 
 def _aggregate_payroll(raw_payroll, include_wages=False):
     """Aggregate hours (and optionally wages) by store, excluding 112-9001."""
+    # Store IDs excluded from all payroll aggregation (corporate / non-franchise locations)
+    EXCLUDED_STORE_IDS = ["112-9001"]
     pf = raw_payroll[
-        ~raw_payroll["Batch Description"].str.contains("112-9001", na=False)
+        ~raw_payroll["Batch Description"].str.contains("|".join(EXCLUDED_STORE_IDS), na=False)
     ].copy()
     pf["store_num"] = pf["Batch Description"].str.extract(r"(112-\d{4})")
     pf["total_hours"] = pf["Reg Hours"] + pf["O/T Hours"]
@@ -124,7 +126,8 @@ def _aggregate_payroll(raw_payroll, include_wages=False):
 # Sales loader & normalizer (for weekly full report)
 # ---------------------------------------------------------------------------
 def _normalize(name):
-    return (
+    import re
+    return re.sub(r"\s+", " ", (
         str(name)
         .lower()
         .replace(",", "")
@@ -132,10 +135,12 @@ def _normalize(name):
         .replace(")", "")
         .replace("-", " ")
         .strip()
-    )
+    ))
 
 
-_NAME_OVERRIDES = {"denton   teasley tx": "denton tx"}
+# Overrides for stores whose names differ between the sales file and reference data.
+# Keys must be in _normalize() output form (lowercase, no punctuation, single spaces).
+_NAME_OVERRIDES = {"denton teasley tx": "denton tx"}
 
 
 def load_net_sales(uploaded_file) -> pd.DataFrame:
@@ -296,7 +301,6 @@ def _write_weekly_excel(df, report_dates):
 
     for dm_name, group in df.groupby("DM", sort=True):
         dm_sales = dm_hours = dm_variance = dm_goal = dm_payroll = 0.0
-        dm_labor_num = dm_labor_den = 0.0
 
         for _, row in group.iterrows():
             variance = float(row["Variance"]) if pd.notna(row["Variance"]) else 0.0
@@ -311,8 +315,6 @@ def _write_weekly_excel(df, report_dates):
             dm_variance += variance
             dm_goal += goal_v
             dm_payroll += payroll_v
-            dm_labor_num += payroll_v
-            dm_labor_den += sales_v
 
             row_fill = _fill(OVER_RED) if variance > 0 else _fill(UNDER_GRN) if variance < 0 else _fill(NEUTRAL)
             ws.row_dimensions[row_num].height = 18
@@ -332,7 +334,7 @@ def _write_weekly_excel(df, report_dates):
                     c.number_format = fmt
             row_num += 1
 
-        dm_labor_pct = dm_labor_num / dm_labor_den if dm_labor_den else 0.0
+        dm_labor_pct = dm_payroll / dm_sales if dm_sales else 0.0
         ws.row_dimensions[row_num].height = 20
         sub_vals = ["", f"{dm_name} — Subtotal", "", "", dm_goal, dm_sales, dm_hours, dm_variance, dm_payroll, dm_labor_pct]
         sub_fmts = [None, None, None, None, FMT_HOURS, FMT_CURRENCY, FMT_HOURS, FMT_VARIANCE, FMT_CURRENCY, "0.0%"]
@@ -411,8 +413,13 @@ def _write_weekly_excel(df, report_dates):
         wr.column_dimensions[get_column_letter(ci)].width = w
 
     ranked = df.copy()
-    ranked["labor_pct"] = ranked["loaded_payroll"] / ranked["Last Week Net Sales"].replace(0, float("nan"))
-    ranked["labor_pct"] = ranked["labor_pct"].fillna(0)
+    if "loaded_payroll" not in ranked.columns:
+        ranked["loaded_payroll"] = 0.0
+    if "Last Week Net Sales" not in ranked.columns:
+        ranked["Last Week Net Sales"] = 0.0
+    ranked["labor_pct"] = (
+        ranked["loaded_payroll"] / ranked["Last Week Net Sales"].replace(0, float("nan"))
+    ).fillna(0)
     ranked = ranked.assign(_abs_var=ranked["Variance"].abs()).sort_values("_abs_var").drop(columns=["_abs_var"]).reset_index(drop=True)
 
     for rank_idx, row in ranked.iterrows():
@@ -547,6 +554,17 @@ def generate_archive_excel(df, report_dates):
     return _write_weekly_excel(df, report_dates)
 
 
+def _pace_status(pct, green_min, green_max, red_above):
+    """Return a pacing status string based on percentage vs thresholds."""
+    if pd.isna(pct):
+        return ""
+    if pct > red_above:
+        return "Over Pacing"
+    if green_min <= pct <= green_max:
+        return "On Pace"
+    return "Under Pacing"
+
+
 # ---------------------------------------------------------------------------
 # Day-specific color thresholds for Mid-Week Pulse
 # Orange = below green_min (under-pacing)
@@ -624,18 +642,18 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
             dm_variance += variance
 
             # Day-specific color coding and status
-            if pct_used > red_above:
+            if pd.isna(pct_used):
+                row_fill = _fill(WHITE)
+                status = ""
+            elif pct_used > red_above:
                 row_fill = _fill(LIGHT_RED)
                 status = "Over Pacing"
             elif green_min <= pct_used <= green_max:
                 row_fill = _fill(LIGHT_GREEN)
                 status = "On Pace"
-            elif pct_used < green_min:
+            else:
                 row_fill = _fill(LIGHT_ORANGE)
                 status = "Under Pacing"
-            else:
-                row_fill = _fill(WHITE)
-                status = ""
             ws.row_dimensions[row_num].height = 18
 
             vals = [row["Store #"], row["Store Name"], row["DM"], goal_v, hours, variance, pct_used, status]
@@ -652,7 +670,7 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
             row_num += 1
 
         dm_pct = dm_hours / dm_goal if dm_goal else 0.0
-        dm_status = "Over Pacing" if dm_pct > red_above else ("On Pace" if green_min <= dm_pct <= green_max else ("Under Pacing" if dm_pct < green_min else ""))
+        dm_status = _pace_status(dm_pct, green_min, green_max, red_above)
         ws.row_dimensions[row_num].height = 20
         sub_vals = ["", f"{dm_name} — Subtotal", "", dm_goal, dm_hours, round(dm_variance, 2), dm_pct, dm_status]
         sub_fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT, None]
@@ -671,7 +689,7 @@ def generate_midweek_report(adp_file, ref_data, band_goals, report_dates, throug
 
     # Grand total
     grand_pct = grand_hours / grand_goal if grand_goal else 0.0
-    grand_status = "Over Pacing" if grand_pct > red_above else ("On Pace" if green_min <= grand_pct <= green_max else ("Under Pacing" if grand_pct < green_min else ""))
+    grand_status = _pace_status(grand_pct, green_min, green_max, red_above)
     ws.row_dimensions[row_num].height = 24
     gt_vals = ["", "GRAND TOTAL", "", grand_goal, grand_hours, round(grand_variance, 2), grand_pct, grand_status]
     gt_fmts = [None, None, None, FMT_HOURS, FMT_HOURS, FMT_VARIANCE, FMT_PCT, None]

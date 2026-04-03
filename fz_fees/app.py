@@ -45,7 +45,7 @@ from supabase_db import (
     save_weekly_actuals, load_weekly_actuals, delete_weekly_actuals,
     draft_exists, load_draft_config, save_draft_bands, lock_drafts,
     get_week_status,
-    load_submissions, load_all_submissions, approve_submission, reject_submission,
+    load_all_submissions, approve_submission, reject_submission,
     load_email_log, load_app_settings, save_app_setting,
 )
 
@@ -207,7 +207,7 @@ def _color_variance_cells(row, week_col_map, has_actuals_weeks, skip_cols):
             elif v < -VARIANCE_GOAL_THRESHOLD:
                 styles[i] = "background-color: #D5F5E3"
             continue
-        orig_week = next((k for k, v in week_col_map.items() if v == col), None)
+        orig_week = next((k for k, label in week_col_map.items() if label == col), None)
         if orig_week not in has_actuals_weeks:
             styles[i] = ""
         elif abs(row[col]) > VARIANCE_GOAL_THRESHOLD:
@@ -491,7 +491,7 @@ if current_user:
     user_is_admin = is_admin(current_user)
 else:
     # Allow admin access locally (no auth configured) but deny on Streamlit Cloud
-    user_is_admin = not os.environ.get("STREAMLIT_SHARING_MODE", False)
+    user_is_admin = not bool(os.environ.get("STREAMLIT_SHARING_MODE", ""))
 
 # ---------------------------------------------------------------------------
 # Navigation — use session state to avoid sticky radio buttons
@@ -923,9 +923,9 @@ elif page == "Prior Week's Reports":
                 labor_pct = pd.to_numeric(merged.get("labor_pct", 0), errors="coerce").fillna(0)
                 archive_df["loaded_payroll"] = labor_pct * archive_df["Last Week Net Sales"]
 
-                # Exclude stores with no activity — matches the weekly report engine filter
+                # Exclude stores with no activity — matches the weekly report engine filter (AND logic)
                 archive_df = archive_df[
-                    (archive_df["actual_hours"] > 0) | (archive_df["Last Week Net Sales"] > 0)
+                    (archive_df["actual_hours"] > 0) & (archive_df["Last Week Net Sales"] > 0)
                 ].reset_index(drop=True)
 
                 st.session_state["archive_df"] = archive_df
@@ -1767,7 +1767,7 @@ elif page == "Store Revenue Bands":
                     ws.merge_cells("A2:D2")
                     status_cell = ws["A2"]
                     status_cell.value = f"Status: {status.upper()}"
-                    status_cell.font = Font(name="Calibri", bold=True, color=GOLD[0:6], size=10)
+                    status_cell.font = Font(name="Calibri", bold=True, color=GOLD, size=10)
 
                     # Headers
                     headers = ["Store #", "Store Name", "Revenue Band", "Hourly Goal"]
@@ -2327,12 +2327,12 @@ elif page == "Rev Band Approvals":
                     with col4:
                         if status == "pending_admin":
                             if st.button("✅ Approve", key=f"approve_{row['id']}"):
-                                approve_submission(row["id"], "admin")
+                                approve_submission(row["id"], current_user or "admin")
                                 st.cache_data.clear()
                                 st.rerun()
                             reject_reason = st.text_input("Reason", key=f"reason_{row['id']}", placeholder="Optional")
                             if st.button("❌ Reject", key=f"reject_{row['id']}"):
-                                reject_submission(row["id"], "admin", reject_reason)
+                                reject_submission(row["id"], current_user or "admin", reject_reason)
                                 st.cache_data.clear()
                                 st.rerun()
                         elif status == "approved":
@@ -2947,12 +2947,12 @@ elif page == "Rev Band Report":
             # Color Result + $ Variance columns per row
             result_col_idx   = display_cols.index("Result")
             variance_col_idx = display_cols.index("$ Variance")
-            for row_idx, row_data in enumerate(report_df[display_cols].itertuples(), start=1):
-                result_val = getattr(row_data, "Result", "")
+            for row_idx, (_, row_data) in enumerate(report_df[display_cols].iterrows(), start=1):
+                result_val = row_data.get("Result", "")
                 fmt = green_fmt if result_val == "Over" else (red_fmt if result_val == "Under" else None)
                 if fmt:
-                    ws.write(row_idx, result_col_idx,   row_data.Result,     fmt)
-                    ws.write(row_idx, variance_col_idx, getattr(row_data, "_7", ""), fmt)
+                    ws.write(row_idx, result_col_idx,   result_val,                  fmt)
+                    ws.write(row_idx, variance_col_idx, row_data.get("$ Variance", ""), fmt)
 
             # Style DM Summary sheet
             ws2 = writer.sheets["DM Summary"]
