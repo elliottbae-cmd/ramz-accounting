@@ -1195,15 +1195,64 @@ elif page == "AVS Performance - DMs":
     st.caption("Summarized DM performance across all their stores by week.")
 
     locked_weeks = get_locked_weeks()
+    # Only show completed weeks — exclude any week whose Wednesday end date hasn't passed yet
+    _today_dm = date.today()
+    locked_weeks = [w for w in locked_weeks if (w + timedelta(days=6)) < _today_dm]
     if not locked_weeks:
-        st.info("No weekly data available yet. Run AVS reports to build history.")
+        st.info("No completed weekly data available yet. Run AVS reports to build history.")
         st.stop()
 
-    # --- Load all data up front for filter options ---
+    # --- Load all data up front (actuals needed for Most Recent / Prior Week logic) ---
     all_locks = _cached_all_locks()
+    actuals = _cached_weekly_actuals()
+    actuals_week_strs = set(actuals["week_start"].unique()) if not actuals.empty else set()
+    weeks_with_actuals = sorted([w for w in locked_weeks if str(w) in actuals_week_strs])
 
-    # --- Period filter ---
-    filtered_weeks = _period_filter(locked_weeks, "dm_perf")
+    # --- Period filter (custom — mirrors Store Level page) ---
+    col_period, col_period_val = st.columns(2)
+    with col_period:
+        period_filter = st.selectbox(
+            "View by",
+            ["Most Recent", "Prior Week", "All Weeks", "Month", "Quarter", "Year"],
+            key="dm_perf_period",
+        )
+    with col_period_val:
+        if period_filter == "Most Recent":
+            last_week = weeks_with_actuals[-1] if weeks_with_actuals else (max(locked_weeks) if locked_weeks else None)
+            filtered_weeks = [last_week] if last_week else []
+            if last_week:
+                st.caption(format_week_label(last_week))
+        elif period_filter == "Prior Week":
+            if len(weeks_with_actuals) >= 2:
+                prior_week = weeks_with_actuals[-2]
+                filtered_weeks = [prior_week]
+                st.caption(format_week_label(prior_week))
+            elif len(weeks_with_actuals) == 1:
+                filtered_weeks = [weeks_with_actuals[0]]
+                st.caption(f"{format_week_label(weeks_with_actuals[0])} (only 1 week available)")
+            else:
+                filtered_weeks = [max(locked_weeks)] if locked_weeks else []
+                st.caption("No submitted data yet — showing most recent locked week")
+        elif period_filter == "Month":
+            months_available = sorted(set((w.year, w.month) for w in locked_weeks))
+            month_labels = [f"{y}-{m:02d}" for y, m in months_available]
+            selected_month = st.selectbox("Select Month", month_labels, index=len(month_labels)-1, key="dm_perf_month")
+            sel_year, sel_month = int(selected_month[:4]), int(selected_month[5:])
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month == sel_month]
+        elif period_filter == "Quarter":
+            quarters_available = sorted(set((w.year, (w.month - 1) // 3 + 1) for w in locked_weeks))
+            quarter_labels = [f"{y} Q{q}" for y, q in quarters_available]
+            selected_quarter = st.selectbox("Select Quarter", quarter_labels, index=len(quarter_labels)-1, key="dm_perf_quarter")
+            sel_year = int(selected_quarter[:4])
+            sel_q = int(selected_quarter[-1])
+            q_months = [(sel_q - 1) * 3 + 1, (sel_q - 1) * 3 + 2, (sel_q - 1) * 3 + 3]
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month in q_months]
+        elif period_filter == "Year":
+            years_available = sorted(set(w.year for w in locked_weeks))
+            selected_year = st.selectbox("Select Year", years_available, index=len(years_available)-1, key="dm_perf_year")
+            filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
+        else:  # All Weeks
+            filtered_weeks = locked_weeks
 
     if not filtered_weeks:
         st.warning("No data for the selected period.")
@@ -1216,7 +1265,6 @@ elif page == "AVS Performance - DMs":
 
     dm_list = sorted(perf_data["dm"].dropna().unique().tolist())
     selected_dms = st.multiselect("Filter by DM", dm_list, default=[], key="dm_perf_dm_filter")
-
     if selected_dms:
         perf_data = perf_data[perf_data["dm"].isin(selected_dms)]
 
@@ -1228,8 +1276,6 @@ elif page == "AVS Performance - DMs":
     st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} → {format_week_label(filtered_weeks[-1])}")
     st.caption(f"{len(filtered_weeks)} week(s)  ·  {perf_data['dm'].nunique()} DM(s)  ·  {perf_data['store_name'].nunique()} store(s)")
 
-    # --- Load actuals and summarize by DM ---
-    actuals = _cached_weekly_actuals()
     week_strs_set = set(week_strs)
 
     if not actuals.empty:
@@ -1237,35 +1283,35 @@ elif page == "AVS Performance - DMs":
     else:
         actuals_filtered = pd.DataFrame(columns=["week_start", "location_id", "variance"])
 
-    # Get DM mapping from lock data
-    store_dm = perf_data[["location_id", "dm"]].drop_duplicates()
+    # Build pivot using locked config as backbone so ALL weeks in the period
+    # appear as columns — actuals filled in where available, 0 where not yet run.
+    store_dm = perf_data[["location_id", "dm", "week_start"]].drop_duplicates()
 
-    # Merge actuals with DM info and sum variance by DM per week
     if not actuals_filtered.empty:
-        dm_actuals = actuals_filtered.merge(store_dm, on="location_id", how="inner")
-        dm_summary = dm_actuals.groupby(["dm", "week_start"]).agg(
-            total_variance=("variance", "sum"),
-        ).reset_index()
+        dm_grid = store_dm.merge(
+            actuals_filtered[["week_start", "location_id", "variance"]],
+            on=["week_start", "location_id"],
+            how="left",
+        )
     else:
-        dm_summary = pd.DataFrame(columns=["dm", "week_start", "total_variance"])
+        dm_grid = store_dm.copy()
+        dm_grid["variance"] = 0.0
+    dm_grid["variance"] = dm_grid["variance"].fillna(0.0)
+
+    dm_summary = dm_grid.groupby(["dm", "week_start"]).agg(
+        total_variance=("variance", "sum"),
+    ).reset_index()
+
+    pivot = dm_summary.pivot_table(
+        index="dm",
+        columns="week_start",
+        values="total_variance",
+        aggfunc="first",
+    ).fillna(0).reset_index()
 
     # Add store count per DM
     dm_store_counts = perf_data.groupby("dm")["store_name"].nunique().reset_index()
     dm_store_counts.columns = ["DM", "Stores"]
-
-    # Pivot: DMs as rows, weeks as columns
-    if not dm_summary.empty:
-        pivot = dm_summary.pivot_table(
-            index="dm",
-            columns="week_start",
-            values="total_variance",
-            aggfunc="first",
-        ).fillna(0).reset_index()
-    else:
-        dms = sorted(perf_data["dm"].dropna().unique())
-        pivot = pd.DataFrame({"dm": dms})
-        for ws in week_strs:
-            pivot[ws] = 0
 
     pivot.columns.name = None
     pivot = pivot.rename(columns={"dm": "DM"})
@@ -1283,8 +1329,13 @@ elif page == "AVS Performance - DMs":
     for wc in week_cols:
         pivot[wc] = pivot[wc].round(0).astype(int)
 
-    # --- Ranking: closest to goal (absolute variance) ranked first ---
-    pivot["_sort_var"] = pivot[week_cols].replace(0, float("nan")).abs().mean(axis=1).fillna(0)
+    # --- Ranking + Total (same logic as Store Level) ---
+    if len(week_cols) > 1:
+        period_total = pivot[week_cols].sum(axis=1)
+        pivot["_sort_var"] = period_total.abs()
+    else:
+        pivot["_sort_var"] = pivot[week_cols[0]].abs() if week_cols else 0
+
     pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
     pivot.insert(0, "Rank", range(1, len(pivot) + 1))
     pivot = pivot.drop(columns=["_sort_var"])
@@ -1292,8 +1343,13 @@ elif page == "AVS Performance - DMs":
     # Rename week columns
     week_col_map = _rename_week_cols(week_cols)
     pivot = pivot.rename(columns=week_col_map)
+    renamed_week_cols = [week_col_map.get(c, c) for c in week_cols]
 
-    # --- Color coding ---
+    # Total column at the end (multi-week only)
+    if len(renamed_week_cols) > 1:
+        pivot["Total"] = pivot[renamed_week_cols].sum(axis=1)
+
+    # --- Color coding (Total handled inside _color_variance_cells) ---
     has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
     styled = pivot.style.apply(
         _color_variance_cells, week_col_map=week_col_map,
