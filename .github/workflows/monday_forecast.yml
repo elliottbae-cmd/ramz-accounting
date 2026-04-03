@@ -1,0 +1,56 @@
+name: Weekly Sales Forecast
+
+on:
+  schedule:
+    - cron: '0 11 * * 1'  # Every Monday at 11am UTC = 6am CT
+  workflow_dispatch:        # Allow manual trigger from GitHub UI
+
+jobs:
+  run-forecast:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas numpy scipy lightgbm scikit-learn requests toml openpyxl
+
+      - name: Write secrets file
+        run: |
+          mkdir -p .streamlit
+          cat > .streamlit/secrets.toml << 'EOF'
+          [supabase]
+          url = "${{ secrets.SUPABASE_URL }}"
+          key = "${{ secrets.SUPABASE_KEY }}"
+
+          [eia]
+          api_key = "${{ secrets.EIA_API_KEY }}"
+
+          [sendgrid]
+          api_key = "${{ secrets.SENDGRID_API_KEY }}"
+          EOF
+
+      - name: Update model paths for Linux
+        run: |
+          sed -i "s|C:/Users/BretElliott/ramz-accounting/|$(pwd)/|g" labor/monday_job.py
+          sed -i "s|C:/Users/BretElliott/ramz-accounting/|$(pwd)/|g" labor/build_features.py
+          sed -i "s|C:/Users/BretElliott/ramz-accounting/|$(pwd)/|g" labor/train_model.py
+          sed -i "s|C:\\\\Users\\\\BretElliott\\\\ramz-accounting\\\\|$(pwd)/|g" labor/monday_job.py
+
+      - name: Run Monday forecast job
+        run: python labor/monday_job.py
+
+      - name: Commit updated model if retrained
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add labor/lgbm_model_v1.pkl labor/model_meta_v1.json labor/feature_matrix.pkl || true
+          git diff --cached --quiet || git commit -m "Auto: model retrain $(date +%Y-%m-%d)"
+          git push || true
