@@ -454,6 +454,17 @@ def remove_admin(email):
 # ---------------------------------------------------------------------------
 # Weekly actuals (actual hours from AVS reports)
 # ---------------------------------------------------------------------------
+def _safe_float(val, default=0.0):
+    """Convert val to float, substituting default for None / NaN / inf.
+    Prevents 'Out of range float values are not JSON compliant' errors."""
+    import math
+    try:
+        f = float(val)
+        return default if not math.isfinite(f) else f
+    except (TypeError, ValueError):
+        return default
+
+
 def save_weekly_actuals(week_start, df):
     """Save per-store actual hours for a week. df must have location_id, actual_hours, etc."""
     try:
@@ -465,11 +476,11 @@ def save_weekly_actuals(week_start, df):
             rows.append({
                 "week_start": week_str,
                 "location_id": row["location_id"],
-                "actual_hours": float(row.get("actual_hours", 0) or 0),
-                "hourly_goal": float(row.get("hourly_goal", 0) or 0),
-                "variance": float(row.get("variance", 0) or 0),
-                "net_sales": float(row.get("net_sales", 0) or 0),
-                "labor_pct": float(row.get("labor_pct", 0) or 0),
+                "actual_hours": _safe_float(row.get("actual_hours")),
+                "hourly_goal": _safe_float(row.get("hourly_goal")),
+                "variance":    _safe_float(row.get("variance")),
+                "net_sales":   _safe_float(row.get("net_sales")),
+                "labor_pct":   _safe_float(row.get("labor_pct")),
             })
 
         if rows:

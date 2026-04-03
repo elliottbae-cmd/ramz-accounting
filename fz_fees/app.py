@@ -832,7 +832,7 @@ elif page == "AVS Weekly Report":
                     "Store #": "location_id", "Variance": "variance", "Hourly Goal": "hourly_goal",
                 }).copy()
                 if "Last Week Net Sales" in actuals_for_db.columns:
-                    actuals_for_db["net_sales"] = actuals_for_db["Last Week Net Sales"]
+                    actuals_for_db["net_sales"] = actuals_for_db["Last Week Net Sales"].fillna(0)
                 if "loaded_payroll" in actuals_for_db.columns and "Last Week Net Sales" in actuals_for_db.columns:
                     actuals_for_db["labor_pct"] = (
                         actuals_for_db["loaded_payroll"] / actuals_for_db["Last Week Net Sales"]
