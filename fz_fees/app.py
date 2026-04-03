@@ -783,11 +783,13 @@ elif page == "AVS Weekly Report":
     st.title("AVS Weekly Labor Report")
     st.caption("Full weekly report with AvS Summary, Store Rankings, and DM Rankings.")
 
+    _wk_default_start = get_week_start()
+    _wk_default_end = _wk_default_start + timedelta(days=6)
     col1, col2 = st.columns(2)
     with col1:
-        start_date = st.date_input("Report Start Date", key="weekly_start")
+        start_date = st.date_input("Report Start Date", value=_wk_default_start, key="weekly_start")
     with col2:
-        end_date = st.date_input("Report End Date", key="weekly_end")
+        end_date = st.date_input("Report End Date", value=_wk_default_end, key="weekly_end")
 
     report_dates = f"{start_date.month}.{start_date.day}.{start_date.strftime('%y')} - {end_date.month}.{end_date.day}.{end_date.strftime('%y')}"
 
@@ -935,11 +937,13 @@ elif page == "AVS Mid-Week Pulse":
 
     DAY_OPTIONS = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday"]
 
+    _mw_default_start = get_week_start()
+    _mw_default_end = _mw_default_start + timedelta(days=6)
     col1, col2, col3 = st.columns(3)
     with col1:
-        start_date = st.date_input("Report Start Date", key="mw_start")
+        start_date = st.date_input("Report Start Date", value=_mw_default_start, key="mw_start")
     with col2:
-        end_date = st.date_input("Report End Date", key="mw_end")
+        end_date = st.date_input("Report End Date", value=_mw_default_end, key="mw_end")
     with col3:
         through_day = st.selectbox("Data Through (Day)", DAY_OPTIONS, key="mw_day",
                                     help="Select the last day of data in this upload. "

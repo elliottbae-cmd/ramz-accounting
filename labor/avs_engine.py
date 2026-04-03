@@ -162,6 +162,11 @@ def _build_merged_df(ref_data, band_goals, pagg, sales=None):
     dm = ref_data.rename(
         columns={"location_id": "Store #", "store_name": "Store Name", "dm": "DM", "revenue_band": "Rev Band"}
     ).copy()
+    # Drop locked-config-only columns that would otherwise create duplicates
+    # (e.g. 'hourly_goal' from the DB conflicts with the computed 'Hourly Goal' below)
+    for _col in ["hourly_goal", "week_start", "source", "status"]:
+        if _col in dm.columns:
+            dm = dm.drop(columns=[_col])
     dm["Hourly Goal"] = dm["Rev Band"].map(band_goals)
 
     if sales is not None:
