@@ -1147,6 +1147,10 @@ elif page == "AVS Performance - Store Level":
             on=["week_start", "location_id"],
             how="left",
         )
+        # Drop stores that have NO actual data for any week in the period
+        # (they were in the locked config but never had a report run)
+        stores_with_any_actuals = set(actuals_filtered["location_id"].unique())
+        grid = grid[grid["location_id"].isin(stores_with_any_actuals)]
     else:
         grid["variance"] = 0.0
     grid["variance"] = grid["variance"].fillna(0.0)
@@ -1316,6 +1320,9 @@ elif page == "AVS Performance - DMs":
             on=["week_start", "location_id"],
             how="left",
         )
+        # Drop stores that have no actual data for any week in the period
+        stores_with_any_actuals_dm = set(actuals_filtered["location_id"].unique())
+        dm_grid = dm_grid[dm_grid["location_id"].isin(stores_with_any_actuals_dm)]
     else:
         dm_grid = store_dm.copy()
         dm_grid["variance"] = 0.0
