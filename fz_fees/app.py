@@ -1012,11 +1012,60 @@ elif page == "AVS Performance - Store Level":
         st.info("No weekly data available yet. Run AVS reports to build history.")
         st.stop()
 
-    # --- Load all data up front for filter options ---
+    # --- Load all data up front (actuals needed for Most Recent / Prior Week logic) ---
     all_locks = _cached_all_locks()
+    actuals = _cached_weekly_actuals()
+    actuals_week_strs = set(actuals["week_start"].unique()) if not actuals.empty else set()
+    # Weeks that have actual data, sorted ascending
+    weeks_with_actuals = sorted([w for w in locked_weeks if str(w) in actuals_week_strs])
 
-    # --- Period filter ---
-    filtered_weeks = _period_filter(locked_weeks, "perf")
+    # --- Period filter (custom for Store Level — uses actuals to anchor Most Recent / Prior Week) ---
+    col_period, col_period_val = st.columns(2)
+    with col_period:
+        period_filter = st.selectbox(
+            "View by",
+            ["Most Recent", "Prior Week", "All Weeks", "Month", "Quarter", "Year"],
+            key="perf_period",
+        )
+    with col_period_val:
+        if period_filter == "Most Recent":
+            # Last week with actual AVS data submitted
+            last_week = weeks_with_actuals[-1] if weeks_with_actuals else (max(locked_weeks) if locked_weeks else None)
+            filtered_weeks = [last_week] if last_week else []
+            if last_week:
+                st.caption(format_week_label(last_week))
+        elif period_filter == "Prior Week":
+            # Second-to-last week with actual data (or let user pick from all weeks with actuals)
+            if len(weeks_with_actuals) >= 2:
+                prior_week = weeks_with_actuals[-2]
+                filtered_weeks = [prior_week]
+                st.caption(format_week_label(prior_week))
+            elif len(weeks_with_actuals) == 1:
+                filtered_weeks = [weeks_with_actuals[0]]
+                st.caption(f"{format_week_label(weeks_with_actuals[0])} (only 1 week available)")
+            else:
+                filtered_weeks = [max(locked_weeks)] if locked_weeks else []
+                st.caption("No submitted data yet — showing most recent locked week")
+        elif period_filter == "Month":
+            months_available = sorted(set((w.year, w.month) for w in locked_weeks))
+            month_labels = [f"{y}-{m:02d}" for y, m in months_available]
+            selected_month = st.selectbox("Select Month", month_labels, index=len(month_labels)-1, key="perf_month")
+            sel_year, sel_month = int(selected_month[:4]), int(selected_month[5:])
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month == sel_month]
+        elif period_filter == "Quarter":
+            quarters_available = sorted(set((w.year, (w.month - 1) // 3 + 1) for w in locked_weeks))
+            quarter_labels = [f"{y} Q{q}" for y, q in quarters_available]
+            selected_quarter = st.selectbox("Select Quarter", quarter_labels, index=len(quarter_labels)-1, key="perf_quarter")
+            sel_year = int(selected_quarter[:4])
+            sel_q = int(selected_quarter[-1])
+            q_months = [(sel_q - 1) * 3 + 1, (sel_q - 1) * 3 + 2, (sel_q - 1) * 3 + 3]
+            filtered_weeks = [w for w in locked_weeks if w.year == sel_year and w.month in q_months]
+        elif period_filter == "Year":
+            years_available = sorted(set(w.year for w in locked_weeks))
+            selected_year = st.selectbox("Select Year", years_available, index=len(years_available)-1, key="perf_year")
+            filtered_weeks = [w for w in locked_weeks if w.year == selected_year]
+        else:  # All Weeks
+            filtered_weeks = locked_weeks
 
     if not filtered_weeks:
         st.warning("No data for the selected period.")
@@ -1032,7 +1081,6 @@ elif page == "AVS Performance - Store Level":
         dm_list = sorted(perf_data["dm"].dropna().unique().tolist())
         selected_dms = st.multiselect("Filter by DM", dm_list, default=[], key="perf_dm_filter")
     with col_store_filter:
-        # If DMs are selected, only show stores for those DMs
         store_pool = perf_data if not selected_dms else perf_data[perf_data["dm"].isin(selected_dms)]
         store_list = sorted(store_pool["store_name"].dropna().unique().tolist())
         selected_stores = st.multiselect("Filter by Store", store_list, default=[], key="perf_store_filter")
@@ -1051,8 +1099,6 @@ elif page == "AVS Performance - Store Level":
     st.subheader(f"Weeks: {format_week_label(filtered_weeks[0])} → {format_week_label(filtered_weeks[-1])}")
     st.caption(f"{len(filtered_weeks)} week(s)  ·  {perf_data['store_name'].nunique()} store(s)")
 
-    # --- Load actuals and merge with lock data ---
-    actuals = _cached_weekly_actuals()
     week_strs_set = set(week_strs)
 
     # Merge lock data (store_name, dm) with actuals (actual_hours, variance)
@@ -1106,11 +1152,16 @@ elif page == "AVS Performance - Store Level":
     pivot = pivot.rename(columns=week_col_map)
     renamed_week_cols = [week_col_map.get(c, c) for c in week_cols]
 
-    # --- Color coding: variance-based ---
+    # --- Total column (only when multiple weeks selected) ---
+    if len(renamed_week_cols) > 1:
+        pivot["Total"] = pivot[renamed_week_cols].sum(axis=1)
+
+    # --- Color coding: variance-based (skip Total column) ---
+    skip_cols = ("Rank", "Store", "Total")
     has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
     styled = pivot.style.apply(
         _color_variance_cells, week_col_map=week_col_map,
-        has_actuals_weeks=has_actuals_weeks, skip_cols=("Rank", "Store"), axis=1,
+        has_actuals_weeks=has_actuals_weeks, skip_cols=skip_cols, axis=1,
     )
 
     # Display all rows — no internal scroll, user scrolls the browser
@@ -1119,12 +1170,6 @@ elif page == "AVS Performance - Store Level":
         use_container_width=False,
         hide_index=True,
         height=(len(pivot) + 1) * 35 + 3,
-    )
-
-    st.info(
-        "This page currently shows the locked hourly goals per week. "
-        "Once you start running AVS reports, actual labor hours will also be "
-        "captured here for Goal vs Actual comparison."
     )
 
 
