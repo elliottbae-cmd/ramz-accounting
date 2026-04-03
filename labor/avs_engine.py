@@ -237,6 +237,14 @@ def _build_merged_df(ref_data, band_goals, pagg, sales=None):
     if "loaded_payroll" in dm.columns:
         dm["loaded_payroll"] = dm["loaded_payroll"].fillna(0.0)
 
+    # Exclude stores with no data for the week:
+    # - Weekly report: drop if actual hours = 0 OR net sales = 0
+    # - Mid-week report (no sales file): drop if actual hours = 0
+    if sales is not None and "Last Week Net Sales" in dm.columns:
+        dm = dm[(dm["actual_hours"] > 0) & (dm["Last Week Net Sales"] > 0)]
+    else:
+        dm = dm[dm["actual_hours"] > 0]
+
     dm = dm.sort_values(["DM", "Store #"]).reset_index(drop=True)
     return dm
 
