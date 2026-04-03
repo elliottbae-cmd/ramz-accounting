@@ -267,8 +267,16 @@ def _render_weekly_preview(df):
         "Est. Labor %": "{:.1f}%",
     })
 
-    st.dataframe(styled, use_container_width=False, hide_index=True,
-                 height=(len(preview_df) + 1) * 35 + 3)
+    st.dataframe(
+        styled,
+        use_container_width=False,
+        hide_index=True,
+        height=(len(preview_df) + 1) * 35 + 3,
+        column_config={
+            "Net Sales":    st.column_config.TextColumn("Net Sales",    width=120),
+            "Est. Payroll": st.column_config.TextColumn("Est. Payroll", width=110),
+        },
+    )
 
     total_goal = preview_df["Hourly Goal"].sum()
     total_hours = preview_df["Actual Hours"].sum()
