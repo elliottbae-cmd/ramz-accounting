@@ -1,0 +1,41 @@
+location_id,store_name,dm,revenue_band
+112-0001,Stillwater (OK),Manny,35k-40k
+112-0002,Muskogee (OK),Dottie,35k-40k
+112-0003,Lawton (OK),Manny,<25k
+112-0004,Ardmore (OK),Manny,<25k
+112-0005,Durant (OK),Manny,<25k
+112-0006,Wichita Falls (TX),Steve,30k-35k
+112-0007,Gainesville (TX),Steve,<25k
+112-0008,Lufkin (TX),Miriam,30k-35k
+112-0009,Nacogdoches (TX),Miriam,25k-30k
+112-0010,Little Elm (TX),Steve,<25k
+112-0011,Princeton (TX),Miriam,<25k
+112-0012,Amelia (OH),Renee,<25k
+112-0013,Milford (OH),Renee,<25k
+112-0014,Cincinnati - Winton Rd (OH),Renee,<25k
+112-0015,Centerville (OH),Cody,45k-50k
+112-0016,Cincinnati - Red Bank Rd (OH),Renee,<25k
+112-0017,West Chester (OH),Cody,30k-35k
+112-0018,Harrison (OH),Renee,30k-35k
+112-0019,Streetsboro (OH),Alex,<25k
+112-0020,Strongsville (OH),Alex,<25k
+112-0021,Loveland (OH),Renee,30k-35k
+112-0022,Avon (OH),Alex,<25k
+112-0023,Lorain (OH),Alex,<25k
+112-0024,Beavercreek (OH),Cody,25k-30k
+112-0026,Fairfield (OH),Alex,<25k
+112-0027,Florence (KY),Alex,<25k
+112-0028,Englewood - S Main (OH),Cody,30k-35k
+112-0029,Grove City (OH),Cody,<25k
+112-0030,Hilliard (OH),Cody,<25k
+112-0031,McAlester (OK),Dottie,<25k
+112-0032,Plano (TX),Miriam,<25k
+112-0033,Brownwood (TX),Steve,<25k
+112-0034,Marshall (TX),Miriam,<25k
+112-0035,Tulsa - 51st (OK),Dottie,NRO Seasoned
+112-0036,Denton (TX),Steve,35k-40k
+112-0037,McKinney - Hardin Blvd (TX),Miriam,35k-40k
+112-0038,Ada (OK),Dottie,NRO
+112-0040,Sherman,Steve,<25k
+112-0042,Victoria,Miriam,<25k
+112-0043,Greenville,Manny,<25k

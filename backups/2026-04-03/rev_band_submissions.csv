@@ -1,0 +1,2 @@
+id,location_id,week_start,selected_band,submitted_at,submitted_by,token,token_expires_at,status,gm_deadline_missed,dm_deadline_missed,dm_approved_at,dm_approved_by,admin_approved_at,admin_approved_by,rejected_at,rejected_by,rejection_reason
+1,112-0001,2026-04-02,35k-40k,2026-04-01T13:35:32.476729+00:00,,ce8291fb-2bd6-4a10-ab98-0a95e4f7da7d,,pending_admin,False,False,2026-04-01T15:02:16.025667+00:00,Manny,,,,,
