@@ -194,10 +194,18 @@ def _rename_week_cols(week_cols):
 
 
 def _color_variance_cells(row, week_col_map, has_actuals_weeks, skip_cols):
-    """Apply red/green background to variance cells based on VARIANCE_GOAL_THRESHOLD."""
+    """Apply red/green background to variance cells based on VARIANCE_GOAL_THRESHOLD.
+    Total column is colored based on its own value regardless of actuals weeks."""
     styles = [""] * len(row)
     for i, col in enumerate(row.index):
         if col in skip_cols:
+            continue
+        if col == "Total":
+            v = row[col]
+            if v > VARIANCE_GOAL_THRESHOLD:
+                styles[i] = "background-color: #FADBD8"
+            elif v < -VARIANCE_GOAL_THRESHOLD:
+                styles[i] = "background-color: #D5F5E3"
             continue
         orig_week = next((k for k, v in week_col_map.items() if v == col), None)
         if orig_week not in has_actuals_weeks:
@@ -1008,8 +1016,11 @@ elif page == "AVS Performance - Store Level":
     st.caption("Compare store performance (Goal vs Actual hours) across weeks.")
 
     locked_weeks = get_locked_weeks()
+    # Only show completed weeks — exclude any week whose Wednesday end date hasn't passed yet
+    _today = date.today()
+    locked_weeks = [w for w in locked_weeks if (w + timedelta(days=6)) < _today]
     if not locked_weeks:
-        st.info("No weekly data available yet. Run AVS reports to build history.")
+        st.info("No completed weekly data available yet. Run AVS reports to build history.")
         st.stop()
 
     # --- Load all data up front (actuals needed for Most Recent / Prior Week logic) ---
@@ -1158,8 +1169,8 @@ elif page == "AVS Performance - Store Level":
     if len(renamed_week_cols) > 1:
         pivot["Total"] = pivot[renamed_week_cols].sum(axis=1)
 
-    # --- Color coding: variance-based (skip non-week columns) ---
-    skip_cols = ("Rank", "Store", "Total")
+    # --- Color coding: variance-based (Total is handled inside _color_variance_cells) ---
+    skip_cols = ("Rank", "Store")
     has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
     styled = pivot.style.apply(
         _color_variance_cells, week_col_map=week_col_map,
