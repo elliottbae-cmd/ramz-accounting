@@ -254,11 +254,11 @@ def _render_weekly_preview(df):
 
     def color_weekly(row):
         v = row["Variance"]
-        if v > 0:
-            return ["background-color: #ffcccc"] * len(row)
-        elif v < 0:
-            return ["background-color: #ccffcc"] * len(row)
-        return ["background-color: #f2f2f2"] * len(row)
+        if abs(v) > VARIANCE_GOAL_THRESHOLD:
+            color = "#FADBD8"   # red — over threshold (significant deviation)
+        else:
+            color = "#D5F5E3"   # green — within threshold (on goal)
+        return [f"background-color: {color}"] * len(row)
 
     styled = preview_df.style.apply(color_weekly, axis=1).format({
         "Net Sales": "${:,.2f}",
