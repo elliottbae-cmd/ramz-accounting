@@ -140,6 +140,62 @@ def _cached_store_sales():
         return pd.DataFrame()
 
 # ---------------------------------------------------------------------------
+# Store name fuzzy matching (for SoS / VOTG file uploads)
+# ---------------------------------------------------------------------------
+def _match_store_name(file_name: str, ref_df: pd.DataFrame):
+    """Return location_id for a store name from an uploaded file.
+
+    Tries (in order): exact match → normalized match → difflib fuzzy match.
+    Returns None if no match found above 0.6 similarity.
+    """
+    import re, difflib
+
+    file_name = str(file_name).strip()
+
+    exact = ref_df[ref_df["store_name"] == file_name]
+    if not exact.empty:
+        return exact.iloc[0]["location_id"]
+
+    def _norm(s):
+        s = re.sub(r"\([^)]+\)", "", str(s))   # strip (STATE)
+        s = re.sub(r"[^a-z0-9\s]", " ", s.lower())
+        return " ".join(s.split())
+
+    file_norm = _norm(file_name)
+    for _, row in ref_df.iterrows():
+        if _norm(row["store_name"]) == file_norm:
+            return row["location_id"]
+
+    names = ref_df["store_name"].tolist()
+    close = difflib.get_close_matches(file_name, names, n=1, cutoff=0.6)
+    if close:
+        hit = ref_df[ref_df["store_name"] == close[0]]
+        if not hit.empty:
+            return hit.iloc[0]["location_id"]
+
+    return None
+
+
+def _get_upload_status(week_start_str: str):
+    """Return weekly_data_status row for a given week, or empty dict."""
+    from supabase_db import get_supabase
+    sb = get_supabase()
+    try:
+        resp = sb.table("weekly_data_status").select("*").eq("week_start", week_start_str).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception:
+        return {}
+
+
+def _mark_upload_status(week_start_str: str, **flags):
+    """Upsert weekly_data_status flags (e.g. sos_uploaded=True)."""
+    from supabase_db import get_supabase
+    sb = get_supabase()
+    payload = {"week_start": week_start_str, **flags}
+    sb.table("weekly_data_status").upsert(payload, on_conflict="week_start").execute()
+
+
+# ---------------------------------------------------------------------------
 # Shared UI Helpers
 # ---------------------------------------------------------------------------
 def _period_filter(locked_weeks, key_prefix):
@@ -522,6 +578,8 @@ ALL_PAGES = {
         "Email Settings",
         "Change Log",
         "Admin Users",
+        "Upload SoS",
+        "Upload VOTG",
     ],
 }
 
@@ -531,7 +589,7 @@ if "active_section" not in st.session_state:
     st.session_state["active_section"] = "accounting"
 
 # Upload key counters — incrementing these resets file uploaders
-for _ctr in ("fz_upload_ctr", "weekly_upload_ctr", "mw_upload_ctr"):
+for _ctr in ("fz_upload_ctr", "weekly_upload_ctr", "mw_upload_ctr", "sos_upload_ctr", "votg_upload_ctr"):
     if _ctr not in st.session_state:
         st.session_state[_ctr] = 0
 
@@ -846,6 +904,7 @@ elif page == "AVS Weekly Report":
                         actuals_for_db["loaded_payroll"] / actuals_for_db["Last Week Net Sales"]
                     ).fillna(0)
                 save_weekly_actuals(week_start, actuals_for_db)
+                _mark_upload_status(str(week_start), sales_uploaded=True)
             st.cache_data.clear()
             # Store results in session state so they persist after rerun
             st.session_state["weekly_report_buf"] = buf
@@ -2972,3 +3031,318 @@ elif page == "Rev Band Report":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="revband_download",
         )
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Upload SoS  (Admin)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Upload SoS":
+    if not user_is_admin:
+        st.error("You do not have permission to access this page.")
+        st.stop()
+
+    st.title("⏱️ Upload Speed of Service")
+    st.caption(
+        "Upload the weekly Freddy's Times report. Data is saved to the forecasting database "
+        "and the week's SoS status is marked complete."
+    )
+
+    from supabase_db import get_supabase as _get_sb
+
+    # --- Week selector ---
+    _sos_default_ws = get_week_start()
+    sos_week_start = st.date_input(
+        "Week Start (Thursday)",
+        value=_sos_default_ws,
+        key="sos_week_start",
+        help="Select the Thursday that begins the week covered by this report.",
+    )
+    sos_week_str = str(sos_week_start)
+
+    # --- Current upload status for chosen week ---
+    _sos_status = _get_upload_status(sos_week_str)
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Sales", "✅ Uploaded" if _sos_status.get("sales_uploaded") else "⬜ Pending")
+    s2.metric("SoS",   "✅ Uploaded" if _sos_status.get("sos_uploaded")   else "⬜ Pending")
+    s3.metric("VOTG",  "✅ Uploaded" if _sos_status.get("votg_uploaded")  else "⬜ Pending")
+
+    st.divider()
+
+    _sos_ctr = st.session_state["sos_upload_ctr"]
+    sos_file = st.file_uploader(
+        "Freddy's Times Report (.xlsx)",
+        type=["xlsx"],
+        key=f"sos_file_{_sos_ctr}",
+        help="The weekly 'Times' spreadsheet exported from the Freddy's ops portal.",
+    )
+
+    if st.button("Upload SoS Data", type="primary", use_container_width=True, key="sos_run"):
+        if sos_file is None:
+            st.error("Please upload the SoS (.xlsx) file first.")
+            st.stop()
+
+        try:
+            with st.spinner("Parsing SoS file..."):
+                raw = pd.read_excel(sos_file, header=None)
+
+                # Row 0 = column headers, Row 1 = "Totals:" — skip both
+                data = raw.iloc[2:].reset_index(drop=True)
+
+                ref_data = _cached_reference_data()
+                active_ref = ref_data[ref_data["active"] == True][["location_id", "store_name"]].drop_duplicates()
+
+                rows, unmatched = [], []
+
+                for _, r in data.iterrows():
+                    store_name = str(r.iloc[0]).strip()
+                    if not store_name or store_name.lower() == "nan":
+                        continue
+
+                    loc_id = _match_store_name(store_name, active_ref)
+                    if not loc_id:
+                        unmatched.append(store_name)
+                        continue
+
+                    # Parse rank "487 of 532"
+                    rank_raw = str(r.iloc[2]) if pd.notna(r.iloc[2]) else ""
+                    sos_rank, total_stores = None, None
+                    if " of " in rank_raw:
+                        parts = rank_raw.split(" of ")
+                        try:
+                            sos_rank    = int(parts[0].strip())
+                            total_stores = int(parts[1].strip())
+                        except ValueError:
+                            pass
+
+                    good_shift   = float(r.iloc[1]) if pd.notna(r.iloc[1]) else None
+                    total_time   = str(r.iloc[3]) if pd.notna(r.iloc[3]) else None
+                    red_ticket   = float(r.iloc[4]) if pd.notna(r.iloc[4]) else None
+                    shift_streak = int(r.iloc[6])   if pd.notna(r.iloc[6]) else None
+
+                    rows.append({
+                        "location_id":    loc_id,
+                        "week_start":     sos_week_str,
+                        "good_shift":     good_shift,
+                        "good_shift_rank": sos_rank,
+                        "total_stores":   total_stores,
+                        "total_time":     total_time,
+                        "red_ticket":     red_ticket,
+                        "shift_streak":   shift_streak,
+                    })
+
+            if not rows:
+                st.error("No store rows could be matched. Check that the file format is correct.")
+                st.stop()
+
+            with st.spinner(f"Saving {len(rows)} store records..."):
+                sb = _get_sb()
+                sb.table("store_sos_weekly").upsert(
+                    rows, on_conflict="location_id,week_start"
+                ).execute()
+                _mark_upload_status(sos_week_str, sos_uploaded=True)
+
+            st.session_state["sos_upload_ctr"] += 1
+            st.cache_data.clear()
+            st.success(f"✅ SoS data saved for {len(rows)} stores (week of {sos_week_str}).")
+
+            if unmatched:
+                st.warning(
+                    f"**{len(unmatched)} store(s) could not be matched** — review and re-upload if needed:\n\n"
+                    + "\n".join(f"• {n}" for n in unmatched)
+                )
+
+            # Show updated status
+            _new_status = _get_upload_status(sos_week_str)
+            if all([
+                _new_status.get("sales_uploaded"),
+                _new_status.get("sos_uploaded"),
+                _new_status.get("votg_uploaded"),
+            ]):
+                st.success(
+                    "🎉 All three uploads complete for this week! "
+                    "The Monday forecast job will run the back-test automatically."
+                )
+            st.rerun()
+
+        except Exception as _e:
+            st.error(f"Upload failed: {_e}")
+
+    # --- Preview last upload for this week ---
+    st.divider()
+    st.subheader("Last Upload Preview")
+    try:
+        sb = _get_sb()
+        _preview_resp = sb.table("store_sos_weekly").select("*").eq("week_start", sos_week_str).execute()
+        if _preview_resp.data:
+            _prev_df = pd.DataFrame(_preview_resp.data)[
+                ["location_id", "good_shift", "good_shift_rank", "total_stores", "total_time", "red_ticket", "shift_streak"]
+            ].rename(columns={
+                "location_id":    "Store #",
+                "good_shift":     "Good Shift",
+                "good_shift_rank": "Rank",
+                "total_stores":   "Total Stores",
+                "total_time":     "Total Time",
+                "red_ticket":     "Red Ticket",
+                "shift_streak":   "Shift Streak",
+            })
+            st.dataframe(_prev_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No SoS data uploaded for this week yet.")
+    except Exception:
+        st.info("No SoS data uploaded for this week yet.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Upload VOTG  (Admin)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Upload VOTG":
+    if not user_is_admin:
+        st.error("You do not have permission to access this page.")
+        st.stop()
+
+    st.title("⭐ Upload Voice of the Guest")
+    st.caption(
+        "Upload the weekly Freddy's VOTG Score Table. Data is saved to the forecasting database "
+        "and the week's VOTG status is marked complete."
+    )
+
+    from supabase_db import get_supabase as _get_sb
+
+    # --- Week selector ---
+    _votg_default_ws = get_week_start()
+    votg_week_start = st.date_input(
+        "Week Start (Thursday)",
+        value=_votg_default_ws,
+        key="votg_week_start",
+        help="Select the Thursday that begins the week covered by this report.",
+    )
+    votg_week_str = str(votg_week_start)
+
+    # --- Current upload status ---
+    _votg_status = _get_upload_status(votg_week_str)
+    v1, v2, v3 = st.columns(3)
+    v1.metric("Sales", "✅ Uploaded" if _votg_status.get("sales_uploaded") else "⬜ Pending")
+    v2.metric("SoS",   "✅ Uploaded" if _votg_status.get("sos_uploaded")   else "⬜ Pending")
+    v3.metric("VOTG",  "✅ Uploaded" if _votg_status.get("votg_uploaded")  else "⬜ Pending")
+
+    st.divider()
+
+    _votg_ctr = st.session_state["votg_upload_ctr"]
+    votg_file = st.file_uploader(
+        "Freddy's VOTG Score Table (.xlsx)",
+        type=["xlsx"],
+        key=f"votg_file_{_votg_ctr}",
+        help="The weekly 'VOTG Score Table' spreadsheet from the Freddy's ops portal.",
+    )
+
+    if st.button("Upload VOTG Data", type="primary", use_container_width=True, key="votg_run"):
+        if votg_file is None:
+            st.error("Please upload the VOTG (.xlsx) file first.")
+            st.stop()
+
+        try:
+            with st.spinner("Parsing VOTG file..."):
+                raw = pd.read_excel(votg_file, header=None)
+
+                # Row 0 = column headers; data starts at row 1
+                data = raw.iloc[1:].reset_index(drop=True)
+
+                ref_data = _cached_reference_data()
+                active_ref = ref_data[ref_data["active"] == True][["location_id", "store_name"]].drop_duplicates()
+
+                rows, unmatched = [], []
+
+                for _, r in data.iterrows():
+                    store_name = str(r.iloc[0]).strip()
+                    if not store_name or store_name.lower() == "nan":
+                        continue
+
+                    loc_id = _match_store_name(store_name, active_ref)
+                    if not loc_id:
+                        unmatched.append(store_name)
+                        continue
+
+                    # Parse rank "532 of 532"
+                    rank_raw = str(r.iloc[2]) if pd.notna(r.iloc[2]) else ""
+                    votg_rank, total_stores = None, None
+                    if " of " in rank_raw:
+                        parts = rank_raw.split(" of ")
+                        try:
+                            votg_rank    = int(parts[0].strip())
+                            total_stores = int(parts[1].strip())
+                        except ValueError:
+                            pass
+
+                    total_reviews        = int(r.iloc[1])   if pd.notna(r.iloc[1]) else None
+                    total_neg_reviews    = int(r.iloc[3])   if pd.notna(r.iloc[3]) else None
+                    guests_per_negative  = float(r.iloc[4]) if pd.notna(r.iloc[4]) else None
+
+                    rows.append({
+                        "location_id":         loc_id,
+                        "week_start":          votg_week_str,
+                        "guests_per_negative": guests_per_negative,
+                        "votg_rank":           votg_rank,
+                        "total_stores":        total_stores,
+                        "total_negative_reviews": total_neg_reviews,
+                        "total_reviews":       total_reviews,
+                    })
+
+            if not rows:
+                st.error("No store rows could be matched. Check that the file format is correct.")
+                st.stop()
+
+            with st.spinner(f"Saving {len(rows)} store records..."):
+                sb = _get_sb()
+                sb.table("store_votg_weekly").upsert(
+                    rows, on_conflict="location_id,week_start"
+                ).execute()
+                _mark_upload_status(votg_week_str, votg_uploaded=True)
+
+            st.session_state["votg_upload_ctr"] += 1
+            st.cache_data.clear()
+            st.success(f"✅ VOTG data saved for {len(rows)} stores (week of {votg_week_str}).")
+
+            if unmatched:
+                st.warning(
+                    f"**{len(unmatched)} store(s) could not be matched** — review and re-upload if needed:\n\n"
+                    + "\n".join(f"• {n}" for n in unmatched)
+                )
+
+            # Show updated status
+            _new_status = _get_upload_status(votg_week_str)
+            if all([
+                _new_status.get("sales_uploaded"),
+                _new_status.get("sos_uploaded"),
+                _new_status.get("votg_uploaded"),
+            ]):
+                st.success(
+                    "🎉 All three uploads complete for this week! "
+                    "The Monday forecast job will run the back-test automatically."
+                )
+            st.rerun()
+
+        except Exception as _e:
+            st.error(f"Upload failed: {_e}")
+
+    # --- Preview last upload for this week ---
+    st.divider()
+    st.subheader("Last Upload Preview")
+    try:
+        sb = _get_sb()
+        _preview_resp = sb.table("store_votg_weekly").select("*").eq("week_start", votg_week_str).execute()
+        if _preview_resp.data:
+            _prev_df = pd.DataFrame(_preview_resp.data)[
+                ["location_id", "guests_per_negative", "votg_rank", "total_stores",
+                 "total_negative_reviews", "total_reviews"]
+            ].rename(columns={
+                "location_id":            "Store #",
+                "guests_per_negative":    "Guests/Neg",
+                "votg_rank":              "Rank",
+                "total_stores":           "Total Stores",
+                "total_negative_reviews": "Neg Reviews",
+                "total_reviews":          "Total Reviews",
+            })
+            st.dataframe(_prev_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No VOTG data uploaded for this week yet.")
+    except Exception:
+        st.info("No VOTG data uploaded for this week yet.")

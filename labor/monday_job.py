@@ -334,12 +334,33 @@ def main():
 
     # -----------------------------------------------------------------------
     # PHASE 2: Back-fill last week's actuals on forecast rows
+    # Only runs when all three weekly uploads (Sales, SoS, VOTG) are complete.
     # -----------------------------------------------------------------------
     print('\n--- PHASE 2: Back-fill prior week actuals on forecast rows ---')
+
+    # The weekly_data_status table uses Thursday-based week_start (Thu–Wed cycle)
+    prior_week_thursday = (prior_week_start - timedelta(days=4)).strftime('%Y-%m-%d')
+    status_rows = sb_get_all(url, hdrs, 'weekly_data_status',
+                             f'&week_start=eq.{prior_week_thursday}')
+    status = status_rows[0] if status_rows else {}
+    all_uploaded = (
+        status.get('sales_uploaded') and
+        status.get('sos_uploaded') and
+        status.get('votg_uploaded')
+    )
+
     prior_week_str = prior_week_start.strftime('%Y-%m-%d')
-    forecast_rows = sb_get_all(url, hdrs, 'sales_forecasts',
-                               f'&week_start=eq.{prior_week_str}')
-    print(f'  Found {len(forecast_rows)} forecast rows to back-fill')
+    forecast_rows = []
+
+    if not all_uploaded:
+        missing = [k for k in ('sales_uploaded', 'sos_uploaded', 'votg_uploaded')
+                   if not status.get(k)]
+        print(f'  Skipping back-fill — uploads not yet complete for week {prior_week_thursday}')
+        print(f'  Missing: {missing}')
+    else:
+        forecast_rows = sb_get_all(url, hdrs, 'sales_forecasts',
+                                   f'&week_start=eq.{prior_week_str}')
+        print(f'  Found {len(forecast_rows)} forecast rows to back-fill')
 
     for fc in forecast_rows:
         loc_id = fc['location_id']
@@ -611,8 +632,9 @@ def main():
 
     # -----------------------------------------------------------------------
     # PHASE 4 (monthly): Retrain model on first Monday of each month
+    # Only runs when all three uploads are complete for the prior week.
     # -----------------------------------------------------------------------
-    if today.day <= 7:
+    if today.day <= 7 and all_uploaded:
         print('\n--- PHASE 4: Monthly model retrain ---')
         try:
             import subprocess
