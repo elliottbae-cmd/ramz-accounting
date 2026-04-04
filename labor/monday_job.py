@@ -265,7 +265,14 @@ def main():
     # Load stores
     stores_raw = sb_get_all(url, hdrs, 'reference_data',
                             '&active=eq.true&store_type=eq.traditional')
-    stores = {s['location_id']: s for s in stores_raw if s.get('open_date') and s.get('latitude')}
+    stores = {s['location_id']: s for s in stores_raw if s.get('latitude')}
+
+    # Load opening dates from store_open_dates (authoritative source)
+    open_dates_raw = sb_get_all(url, hdrs, 'store_open_dates')
+    open_dates_map = {r['location_id']: r['opening_date'] for r in open_dates_raw}
+    for loc_id, store in stores.items():
+        store['open_date'] = open_dates_map.get(loc_id)
+    stores = {loc_id: s for loc_id, s in stores.items() if s.get('open_date')}
     print(f'\nActive traditional stores with lat/long: {len(stores)}')
 
     # Load model
