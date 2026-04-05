@@ -1,0 +1,238 @@
+id,week_start,location_id,store_name,dm,revenue_band,hourly_goal,source,status
+38,2026-03-26,112-0001,Stillwater (OK),Manny,35k-40k,588.0,initial-snapshot,locked
+39,2026-03-26,112-0002,Muskogee (OK),Dottie,35k-40k,588.0,initial-snapshot,locked
+40,2026-03-26,112-0003,Lawton (OK),Manny,<25k,422.0,initial-snapshot,locked
+41,2026-03-26,112-0004,Ardmore (OK),Manny,<25k,422.0,initial-snapshot,locked
+42,2026-03-26,112-0005,Durant (OK),Manny,<25k,422.0,initial-snapshot,locked
+43,2026-03-26,112-0006,Wichita Falls (TX),Steve,30k-35k,504.0,initial-snapshot,locked
+44,2026-03-26,112-0007,Gainesville (TX),Steve,<25k,422.0,initial-snapshot,locked
+45,2026-03-26,112-0008,Lufkin (TX),Miriam,30k-35k,504.0,initial-snapshot,locked
+46,2026-03-26,112-0009,Nacogdoches (TX),Miriam,25k-30k,420.0,initial-snapshot,locked
+47,2026-03-26,112-0010,Little Elm (TX),Steve,<25k,422.0,initial-snapshot,locked
+48,2026-03-26,112-0011,Princeton (TX),Miriam,<25k,422.0,initial-snapshot,locked
+49,2026-03-26,112-0012,Amelia (OH),Renee,<25k,422.0,initial-snapshot,locked
+50,2026-03-26,112-0013,Milford (OH),Renee,<25k,422.0,initial-snapshot,locked
+51,2026-03-26,112-0014,Cincinnati - Winton Rd (OH),Renee,<25k,422.0,initial-snapshot,locked
+52,2026-03-26,112-0015,Centerville (OH),Cody,45k-50k,849.0,initial-snapshot,locked
+53,2026-03-26,112-0016,Cincinnati - Red Bank Rd (OH),Renee,<25k,422.0,initial-snapshot,locked
+54,2026-03-26,112-0017,West Chester (OH),Cody,30k-35k,504.0,initial-snapshot,locked
+55,2026-03-26,112-0018,Harrison (OH),Renee,30k-35k,504.0,initial-snapshot,locked
+56,2026-03-26,112-0019,Streetsboro (OH),Alex,<25k,422.0,initial-snapshot,locked
+57,2026-03-26,112-0020,Strongsville (OH),Alex,<25k,422.0,initial-snapshot,locked
+58,2026-03-26,112-0021,Loveland (OH),Renee,30k-35k,504.0,initial-snapshot,locked
+59,2026-03-26,112-0022,Avon (OH),Alex,<25k,422.0,initial-snapshot,locked
+60,2026-03-26,112-0023,Lorain (OH),Alex,<25k,422.0,initial-snapshot,locked
+61,2026-03-26,112-0024,Beavercreek (OH),Cody,25k-30k,420.0,initial-snapshot,locked
+62,2026-03-26,112-0026,Fairfield (OH),Alex,<25k,422.0,initial-snapshot,locked
+63,2026-03-26,112-0027,Florence (KY),Alex,<25k,422.0,initial-snapshot,locked
+64,2026-03-26,112-0028,Englewood - S Main (OH),Cody,30k-35k,504.0,initial-snapshot,locked
+65,2026-03-26,112-0029,Grove City (OH),Cody,<25k,422.0,initial-snapshot,locked
+66,2026-03-26,112-0030,Hilliard (OH),Cody,<25k,422.0,initial-snapshot,locked
+67,2026-03-26,112-0031,McAlester (OK),Dottie,<25k,422.0,initial-snapshot,locked
+68,2026-03-26,112-0032,Plano (TX),Miriam,<25k,422.0,initial-snapshot,locked
+69,2026-03-26,112-0033,Brownwood (TX),Steve,<25k,422.0,initial-snapshot,locked
+70,2026-03-26,112-0034,Marshall (TX),Miriam,<25k,422.0,initial-snapshot,locked
+71,2026-03-26,112-0035,Tulsa - 51st (OK),Dottie,NRO Seasoned,895.0,initial-snapshot,locked
+72,2026-03-26,112-0036,Denton (TX),Steve,35k-40k,588.0,initial-snapshot,locked
+73,2026-03-26,112-0037,McKinney - Hardin Blvd (TX),Miriam,35k-40k,588.0,initial-snapshot,locked
+74,2026-03-26,112-0038,Ada (OK),Dottie,NRO,979.0,initial-snapshot,locked
+275,2026-04-02,112-0001,Stillwater (OK),Manny,30k-35k,559.0,manual-lock,locked
+276,2026-04-02,112-0002,Muskogee (OK),Dottie,35k-40k,620.0,manual-lock,locked
+277,2026-04-02,112-0003,Lawton (OK),Manny,25k-30k,473.0,manual-lock,locked
+278,2026-04-02,112-0004,Ardmore (OK),Manny,30k-35k,559.0,manual-lock,locked
+279,2026-04-02,112-0005,Durant (OK),Manny,<25k,422.0,manual-lock,locked
+280,2026-04-02,112-0006,Wichita Falls (TX),Steve,30k-35k,559.0,manual-lock,locked
+281,2026-04-02,112-0007,Gainesville (TX),Steve,<25k,422.0,manual-lock,locked
+282,2026-04-02,112-0008,Lufkin (TX),Miriam,30k-35k,559.0,manual-lock,locked
+283,2026-04-02,112-0009,Nacogdoches (TX),Miriam,25k-30k,473.0,manual-lock,locked
+284,2026-04-02,112-0010,Little Elm (TX),Steve,<25k,422.0,manual-lock,locked
+285,2026-04-02,112-0011,Princeton (TX),Miriam,25k-30k,473.0,manual-lock,locked
+286,2026-04-02,112-0012,Amelia (OH),Renee,25k-30k,473.0,manual-lock,locked
+287,2026-04-02,112-0013,Milford (OH),Renee,25k-30k,473.0,manual-lock,locked
+288,2026-04-02,112-0014,Cincinnati - Winton Rd (OH),Renee,<25k,422.0,manual-lock,locked
+289,2026-04-02,112-0015,Centerville (OH),Cody,45k-50k,849.0,manual-lock,locked
+290,2026-04-02,112-0016,Cincinnati - Red Bank Rd (OH),Renee,<25k,422.0,manual-lock,locked
+291,2026-04-02,112-0017,West Chester (OH),Cody,30k-35k,559.0,manual-lock,locked
+292,2026-04-02,112-0018,Harrison (OH),Renee,30k-35k,559.0,manual-lock,locked
+293,2026-04-02,112-0019,Streetsboro (OH),Alex,<25k,422.0,manual-lock,locked
+294,2026-04-02,112-0020,Strongsville (OH),Alex,<25k,422.0,manual-lock,locked
+295,2026-04-02,112-0021,Loveland (OH),Renee,30k-35k,559.0,manual-lock,locked
+296,2026-04-02,112-0022,Avon (OH),Alex,<25k,422.0,manual-lock,locked
+297,2026-04-02,112-0023,Lorain (OH),Alex,<25k,422.0,manual-lock,locked
+298,2026-04-02,112-0024,Beavercreek (OH),Cody,30k-35k,559.0,manual-lock,locked
+299,2026-04-02,112-0026,Fairfield (OH),Alex,25k-30k,473.0,manual-lock,locked
+300,2026-04-02,112-0027,Florence (KY),Alex,25k-30k,473.0,manual-lock,locked
+301,2026-04-02,112-0028,Englewood - S Main (OH),Cody,30k-35k,559.0,manual-lock,locked
+302,2026-04-02,112-0029,Grove City (OH),Cody,25k-30k,473.0,manual-lock,locked
+303,2026-04-02,112-0030,Hilliard (OH),Cody,<25k,422.0,manual-lock,locked
+304,2026-04-02,112-0031,McAlester (OK),Dottie,25k-30k,473.0,manual-lock,locked
+305,2026-04-02,112-0032,Plano (TX),Miriam,25k-30k,473.0,manual-lock,locked
+328,2026-04-09,112-0014,Cincinnati - Winton Rd (OH),Renee,<25k,422.0,draft,draft
+329,2026-04-09,112-0015,Centerville (OH),Cody,45k-50k,849.0,draft,draft
+330,2026-04-09,112-0016,Cincinnati - Red Bank Rd (OH),Renee,<25k,422.0,draft,draft
+331,2026-04-09,112-0017,West Chester (OH),Cody,30k-35k,559.0,draft,draft
+332,2026-04-09,112-0018,Harrison (OH),Renee,30k-35k,559.0,draft,draft
+333,2026-04-09,112-0019,Streetsboro (OH),Alex,<25k,422.0,draft,draft
+334,2026-04-09,112-0020,Strongsville (OH),Alex,<25k,422.0,draft,draft
+335,2026-04-09,112-0021,Loveland (OH),Renee,30k-35k,559.0,draft,draft
+336,2026-04-09,112-0022,Avon (OH),Alex,<25k,422.0,draft,draft
+337,2026-04-09,112-0023,Lorain (OH),Alex,<25k,422.0,draft,draft
+338,2026-04-09,112-0024,Beavercreek (OH),Cody,25k-30k,473.0,draft,draft
+339,2026-04-09,112-0026,Fairfield (OH),Alex,25k-30k,473.0,draft,draft
+340,2026-04-09,112-0027,Florence (KY),Alex,25k-30k,473.0,draft,draft
+355,2026-03-19,112-0001,Stillwater (OK),Manny,35k-40k,620.0,initial-snapshot,locked
+356,2026-03-19,112-0002,Muskogee (OK),Dottie,35k-40k,620.0,initial-snapshot,locked
+357,2026-03-19,112-0003,Lawton (OK),Manny,<25k,422.0,initial-snapshot,locked
+358,2026-03-19,112-0004,Ardmore (OK),Manny,<25k,422.0,initial-snapshot,locked
+359,2026-03-19,112-0005,Durant (OK),Manny,<25k,422.0,initial-snapshot,locked
+360,2026-03-19,112-0006,Wichita Falls (TX),Steve,30k-35k,559.0,initial-snapshot,locked
+361,2026-03-19,112-0007,Gainesville (TX),Steve,<25k,422.0,initial-snapshot,locked
+362,2026-03-19,112-0008,Lufkin (TX),Miriam,30k-35k,559.0,initial-snapshot,locked
+363,2026-03-19,112-0009,Nacogdoches (TX),Miriam,25k-30k,473.0,initial-snapshot,locked
+364,2026-03-19,112-0010,Little Elm (TX),Steve,<25k,422.0,initial-snapshot,locked
+365,2026-03-19,112-0011,Princeton (TX),Miriam,<25k,422.0,initial-snapshot,locked
+366,2026-03-19,112-0012,Amelia (OH),Renee,<25k,422.0,initial-snapshot,locked
+367,2026-03-19,112-0013,Milford (OH),Renee,<25k,422.0,initial-snapshot,locked
+368,2026-03-19,112-0014,Cincinnati - Winton Rd (OH),Renee,<25k,422.0,initial-snapshot,locked
+369,2026-03-19,112-0015,Centerville (OH),Cody,45k-50k,849.0,initial-snapshot,locked
+370,2026-03-19,112-0016,Cincinnati - Red Bank Rd (OH),Renee,<25k,422.0,initial-snapshot,locked
+371,2026-03-19,112-0017,West Chester (OH),Cody,30k-35k,559.0,initial-snapshot,locked
+372,2026-03-19,112-0018,Harrison (OH),Renee,30k-35k,559.0,initial-snapshot,locked
+373,2026-03-19,112-0019,Streetsboro (OH),Alex,<25k,422.0,initial-snapshot,locked
+374,2026-03-19,112-0020,Strongsville (OH),Alex,<25k,422.0,initial-snapshot,locked
+375,2026-03-19,112-0021,Loveland (OH),Renee,30k-35k,559.0,initial-snapshot,locked
+376,2026-03-19,112-0022,Avon (OH),Alex,<25k,422.0,initial-snapshot,locked
+377,2026-03-19,112-0023,Lorain (OH),Alex,<25k,422.0,initial-snapshot,locked
+378,2026-03-19,112-0024,Beavercreek (OH),Cody,25k-30k,473.0,initial-snapshot,locked
+379,2026-03-19,112-0026,Fairfield (OH),Alex,<25k,422.0,initial-snapshot,locked
+380,2026-03-19,112-0027,Florence (KY),Alex,<25k,422.0,initial-snapshot,locked
+381,2026-03-19,112-0028,Englewood - S Main (OH),Cody,30k-35k,559.0,initial-snapshot,locked
+382,2026-03-19,112-0029,Grove City (OH),Cody,<25k,422.0,initial-snapshot,locked
+383,2026-03-19,112-0030,Hilliard (OH),Cody,<25k,422.0,initial-snapshot,locked
+384,2026-03-19,112-0031,McAlester (OK),Dottie,<25k,422.0,initial-snapshot,locked
+385,2026-03-19,112-0032,Plano (TX),Miriam,<25k,422.0,initial-snapshot,locked
+386,2026-03-19,112-0033,Brownwood (TX),Steve,<25k,422.0,initial-snapshot,locked
+387,2026-03-19,112-0034,Marshall (TX),Miriam,<25k,422.0,initial-snapshot,locked
+388,2026-03-19,112-0035,Tulsa - 51st (OK),Dottie,NRO Seasoned,895.0,initial-snapshot,locked
+389,2026-03-19,112-0036,Denton (TX),Steve,35k-40k,620.0,initial-snapshot,locked
+390,2026-03-19,112-0037,McKinney - Hardin Blvd (TX),Miriam,35k-40k,620.0,initial-snapshot,locked
+391,2026-03-19,112-0038,Ada (OK),Dottie,NRO,979.0,initial-snapshot,locked
+392,2026-03-19,112-0040,Sherman,Steve,<25k,422.0,initial-snapshot,locked
+393,2026-03-19,112-0042,Victoria,Miriam,<25k,422.0,initial-snapshot,locked
+394,2026-03-19,112-0043,Greenville,Manny,<25k,422.0,initial-snapshot,locked
+155,2026-04-16,112-0001,Stillwater (OK),Manny,35k-40k,588.0,draft,draft
+156,2026-04-16,112-0002,Muskogee (OK),Dottie,35k-40k,588.0,draft,draft
+157,2026-04-16,112-0003,Lawton (OK),Manny,<25k,422.0,draft,draft
+158,2026-04-16,112-0004,Ardmore (OK),Manny,<25k,422.0,draft,draft
+159,2026-04-16,112-0005,Durant (OK),Manny,<25k,422.0,draft,draft
+160,2026-04-16,112-0006,Wichita Falls (TX),Steve,30k-35k,504.0,draft,draft
+161,2026-04-16,112-0007,Gainesville (TX),Steve,<25k,422.0,draft,draft
+162,2026-04-16,112-0008,Lufkin (TX),Miriam,30k-35k,504.0,draft,draft
+163,2026-04-16,112-0009,Nacogdoches (TX),Miriam,25k-30k,420.0,draft,draft
+164,2026-04-16,112-0010,Little Elm (TX),Steve,<25k,422.0,draft,draft
+165,2026-04-16,112-0011,Princeton (TX),Miriam,<25k,422.0,draft,draft
+166,2026-04-16,112-0012,Amelia (OH),Renee,<25k,422.0,draft,draft
+167,2026-04-16,112-0013,Milford (OH),Renee,<25k,422.0,draft,draft
+168,2026-04-16,112-0014,Cincinnati - Winton Rd (OH),Renee,<25k,422.0,draft,draft
+169,2026-04-16,112-0015,Centerville (OH),Cody,45k-50k,849.0,draft,draft
+170,2026-04-16,112-0016,Cincinnati - Red Bank Rd (OH),Renee,<25k,422.0,draft,draft
+171,2026-04-16,112-0017,West Chester (OH),Cody,30k-35k,504.0,draft,draft
+172,2026-04-16,112-0018,Harrison (OH),Renee,30k-35k,504.0,draft,draft
+173,2026-04-16,112-0019,Streetsboro (OH),Alex,<25k,422.0,draft,draft
+174,2026-04-16,112-0020,Strongsville (OH),Alex,<25k,422.0,draft,draft
+175,2026-04-16,112-0021,Loveland (OH),Renee,30k-35k,504.0,draft,draft
+176,2026-04-16,112-0022,Avon (OH),Alex,<25k,422.0,draft,draft
+177,2026-04-16,112-0023,Lorain (OH),Alex,<25k,422.0,draft,draft
+178,2026-04-16,112-0024,Beavercreek (OH),Cody,25k-30k,420.0,draft,draft
+179,2026-04-16,112-0026,Fairfield (OH),Alex,<25k,422.0,draft,draft
+180,2026-04-16,112-0027,Florence (KY),Alex,<25k,422.0,draft,draft
+181,2026-04-16,112-0028,Englewood - S Main (OH),Cody,30k-35k,504.0,draft,draft
+182,2026-04-16,112-0029,Grove City (OH),Cody,<25k,422.0,draft,draft
+183,2026-04-16,112-0030,Hilliard (OH),Cody,<25k,422.0,draft,draft
+184,2026-04-16,112-0031,McAlester (OK),Dottie,<25k,422.0,draft,draft
+185,2026-04-16,112-0032,Plano (TX),Miriam,<25k,422.0,draft,draft
+186,2026-04-16,112-0033,Brownwood (TX),Steve,<25k,422.0,draft,draft
+187,2026-04-16,112-0034,Marshall (TX),Miriam,<25k,422.0,draft,draft
+188,2026-04-16,112-0035,Tulsa - 51st (OK),Dottie,NRO Seasoned,895.0,draft,draft
+189,2026-04-16,112-0036,Denton (TX),Steve,35k-40k,588.0,draft,draft
+190,2026-04-16,112-0037,McKinney - Hardin Blvd (TX),Miriam,35k-40k,588.0,draft,draft
+191,2026-04-16,112-0038,Ada (OK),Dottie,NRO,979.0,draft,draft
+192,2026-04-16,112-0040,Sherman,Steve,<25k,422.0,draft,draft
+193,2026-04-16,112-0042,Victoria,Miriam,<25k,422.0,draft,draft
+194,2026-04-16,112-0043,Greenville,Manny,<25k,422.0,draft,draft
+195,2026-04-23,112-0001,Stillwater (OK),Manny,35k-40k,588.0,draft,draft
+196,2026-04-23,112-0002,Muskogee (OK),Dottie,35k-40k,588.0,draft,draft
+197,2026-04-23,112-0003,Lawton (OK),Manny,<25k,422.0,draft,draft
+198,2026-04-23,112-0004,Ardmore (OK),Manny,<25k,422.0,draft,draft
+199,2026-04-23,112-0005,Durant (OK),Manny,<25k,422.0,draft,draft
+200,2026-04-23,112-0006,Wichita Falls (TX),Steve,30k-35k,504.0,draft,draft
+201,2026-04-23,112-0007,Gainesville (TX),Steve,<25k,422.0,draft,draft
+202,2026-04-23,112-0008,Lufkin (TX),Miriam,30k-35k,504.0,draft,draft
+203,2026-04-23,112-0009,Nacogdoches (TX),Miriam,25k-30k,420.0,draft,draft
+204,2026-04-23,112-0010,Little Elm (TX),Steve,<25k,422.0,draft,draft
+205,2026-04-23,112-0011,Princeton (TX),Miriam,<25k,422.0,draft,draft
+206,2026-04-23,112-0012,Amelia (OH),Renee,<25k,422.0,draft,draft
+207,2026-04-23,112-0013,Milford (OH),Renee,<25k,422.0,draft,draft
+208,2026-04-23,112-0014,Cincinnati - Winton Rd (OH),Renee,<25k,422.0,draft,draft
+209,2026-04-23,112-0015,Centerville (OH),Cody,45k-50k,849.0,draft,draft
+210,2026-04-23,112-0016,Cincinnati - Red Bank Rd (OH),Renee,<25k,422.0,draft,draft
+211,2026-04-23,112-0017,West Chester (OH),Cody,30k-35k,504.0,draft,draft
+212,2026-04-23,112-0018,Harrison (OH),Renee,30k-35k,504.0,draft,draft
+213,2026-04-23,112-0019,Streetsboro (OH),Alex,<25k,422.0,draft,draft
+214,2026-04-23,112-0020,Strongsville (OH),Alex,<25k,422.0,draft,draft
+215,2026-04-23,112-0021,Loveland (OH),Renee,30k-35k,504.0,draft,draft
+216,2026-04-23,112-0022,Avon (OH),Alex,<25k,422.0,draft,draft
+217,2026-04-23,112-0023,Lorain (OH),Alex,<25k,422.0,draft,draft
+218,2026-04-23,112-0024,Beavercreek (OH),Cody,25k-30k,420.0,draft,draft
+219,2026-04-23,112-0026,Fairfield (OH),Alex,<25k,422.0,draft,draft
+220,2026-04-23,112-0027,Florence (KY),Alex,<25k,422.0,draft,draft
+221,2026-04-23,112-0028,Englewood - S Main (OH),Cody,30k-35k,504.0,draft,draft
+222,2026-04-23,112-0029,Grove City (OH),Cody,<25k,422.0,draft,draft
+223,2026-04-23,112-0030,Hilliard (OH),Cody,<25k,422.0,draft,draft
+224,2026-04-23,112-0031,McAlester (OK),Dottie,<25k,422.0,draft,draft
+225,2026-04-23,112-0032,Plano (TX),Miriam,<25k,422.0,draft,draft
+226,2026-04-23,112-0033,Brownwood (TX),Steve,<25k,422.0,draft,draft
+227,2026-04-23,112-0034,Marshall (TX),Miriam,<25k,422.0,draft,draft
+228,2026-04-23,112-0035,Tulsa - 51st (OK),Dottie,NRO Seasoned,895.0,draft,draft
+229,2026-04-23,112-0036,Denton (TX),Steve,35k-40k,588.0,draft,draft
+230,2026-04-23,112-0037,McKinney - Hardin Blvd (TX),Miriam,35k-40k,588.0,draft,draft
+231,2026-04-23,112-0038,Ada (OK),Dottie,NRO,979.0,draft,draft
+232,2026-04-23,112-0040,Sherman,Steve,<25k,422.0,draft,draft
+233,2026-04-23,112-0042,Victoria,Miriam,<25k,422.0,draft,draft
+234,2026-04-23,112-0043,Greenville,Manny,<25k,422.0,draft,draft
+306,2026-04-02,112-0033,Brownwood (TX),Steve,25k-30k,473.0,manual-lock,locked
+307,2026-04-02,112-0034,Marshall (TX),Miriam,25k-30k,473.0,manual-lock,locked
+308,2026-04-02,112-0035,Tulsa - 51st (OK),Dottie,45k-50k,849.0,manual-lock,locked
+309,2026-04-02,112-0036,Denton (TX),Steve,35k-40k,620.0,manual-lock,locked
+310,2026-04-02,112-0037,McKinney - Hardin Blvd (TX),Miriam,35k-40k,620.0,manual-lock,locked
+311,2026-04-02,112-0038,Ada (OK),Dottie,45k-50k,849.0,manual-lock,locked
+312,2026-04-02,112-0040,Sherman,Steve,<25k,422.0,manual-lock,locked
+313,2026-04-02,112-0042,Victoria,Miriam,<25k,422.0,manual-lock,locked
+314,2026-04-02,112-0043,Greenville,Manny,<25k,422.0,manual-lock,locked
+315,2026-04-09,112-0001,Stillwater (OK),Manny,30k-35k,559.0,draft,draft
+316,2026-04-09,112-0002,Muskogee (OK),Dottie,35k-40k,620.0,draft,draft
+317,2026-04-09,112-0003,Lawton (OK),Manny,25k-30k,473.0,draft,draft
+318,2026-04-09,112-0004,Ardmore (OK),Manny,30k-35k,559.0,draft,draft
+319,2026-04-09,112-0005,Durant (OK),Manny,<25k,422.0,draft,draft
+320,2026-04-09,112-0006,Wichita Falls (TX),Steve,30k-35k,559.0,draft,draft
+321,2026-04-09,112-0007,Gainesville (TX),Steve,<25k,422.0,draft,draft
+322,2026-04-09,112-0008,Lufkin (TX),Miriam,30k-35k,559.0,draft,draft
+323,2026-04-09,112-0009,Nacogdoches (TX),Miriam,25k-30k,473.0,draft,draft
+324,2026-04-09,112-0010,Little Elm (TX),Steve,<25k,422.0,draft,draft
+325,2026-04-09,112-0011,Princeton (TX),Miriam,25k-30k,473.0,draft,draft
+326,2026-04-09,112-0012,Amelia (OH),Renee,25k-30k,473.0,draft,draft
+327,2026-04-09,112-0013,Milford (OH),Renee,25k-30k,473.0,draft,draft
+341,2026-04-09,112-0028,Englewood - S Main (OH),Cody,30k-35k,559.0,draft,draft
+342,2026-04-09,112-0029,Grove City (OH),Cody,25k-30k,473.0,draft,draft
+343,2026-04-09,112-0030,Hilliard (OH),Cody,<25k,422.0,draft,draft
+344,2026-04-09,112-0031,McAlester (OK),Dottie,25k-30k,473.0,draft,draft
+345,2026-04-09,112-0032,Plano (TX),Miriam,25k-30k,473.0,draft,draft
+346,2026-04-09,112-0033,Brownwood (TX),Steve,25k-30k,473.0,draft,draft
+347,2026-04-09,112-0034,Marshall (TX),Miriam,25k-30k,473.0,draft,draft
+348,2026-04-09,112-0035,Tulsa - 51st (OK),Dottie,40k-45k,719.0,draft,draft
+349,2026-04-09,112-0036,Denton (TX),Steve,35k-40k,620.0,draft,draft
+350,2026-04-09,112-0037,McKinney - Hardin Blvd (TX),Miriam,35k-40k,620.0,draft,draft
+351,2026-04-09,112-0038,Ada (OK),Dottie,45k-50k,849.0,draft,draft
+352,2026-04-09,112-0040,Sherman,Steve,<25k,422.0,draft,draft
+353,2026-04-09,112-0042,Victoria,Miriam,<25k,422.0,draft,draft
+354,2026-04-09,112-0043,Greenville,Manny,<25k,422.0,draft,draft
