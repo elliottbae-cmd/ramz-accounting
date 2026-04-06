@@ -17,6 +17,7 @@ import pickle
 import toml
 import sys
 import os
+import time
 from datetime import date, timedelta, datetime, timezone
 
 sys.path.insert(0, 'C:/Users/BretElliott/ramz-accounting')
@@ -142,20 +143,29 @@ def pull_weather_forecast(lat, lon, days=16):
 
 def pull_weather_actuals(lat, lon, start_date, end_date):
     """Pull historical actuals from Open-Meteo archive."""
-    r = requests.get(
-        'https://archive-api.open-meteo.com/v1/archive',
-        params={
-            'latitude': lat, 'longitude': lon,
-            'start_date': start_date.strftime('%Y-%m-%d'),
-            'end_date': end_date.strftime('%Y-%m-%d'),
-            'daily': 'temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code',
-            'temperature_unit': 'fahrenheit',
-            'precipitation_unit': 'inch',
-            'timezone': 'America/Chicago',
-        },
-        timeout=15
-    )
-    return r.json().get('daily', {})
+    params = {
+        'latitude': lat, 'longitude': lon,
+        'start_date': start_date.strftime('%Y-%m-%d'),
+        'end_date': end_date.strftime('%Y-%m-%d'),
+        'daily': 'temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code',
+        'temperature_unit': 'fahrenheit',
+        'precipitation_unit': 'inch',
+        'timezone': 'America/Chicago',
+    }
+    for attempt in range(3):
+        try:
+            r = requests.get(
+                'https://archive-api.open-meteo.com/v1/archive',
+                params=params,
+                timeout=60,
+            )
+            return r.json().get('daily', {})
+        except requests.exceptions.Timeout:
+            if attempt == 2:
+                print(f'    Weather actuals fetch timed out after 3 attempts — skipping ({lat},{lon})')
+                return {}
+            time.sleep(5)
+    return {}
 
 
 def weather_to_rows(loc_id, daily, is_forecast):
