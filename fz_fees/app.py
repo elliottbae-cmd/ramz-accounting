@@ -3521,6 +3521,10 @@ elif page == "Sales Forecasts":
                 "forecast_error_pct":"Error %",
                 "band_hit":          "Band Hit",
             })
+            # Compute totals before formatting converts to strings
+            _totals = {col: pd.to_numeric(fc_df[col], errors="coerce").sum()
+                       for col in ["Low", "Point", "High", "Actual"] if col in fc_df.columns}
+
             for col in ["Low", "Point", "High", "Actual"]:
                 if col in fc_df.columns:
                     fc_df[col] = fc_df[col].apply(
@@ -3534,6 +3538,15 @@ elif page == "Sales Forecasts":
                 fc_df["Band Hit"] = fc_df["Band Hit"].apply(
                     lambda x: "✅" if x is True else ("❌" if x is False else "—")
                 )
+
+            # Append totals row
+            _totals_row = {c: "" for c in fc_df.columns}
+            _totals_row["Store #"] = "TOTAL"
+            _totals_row["Store"] = ""
+            for col, val in _totals.items():
+                _totals_row[col] = f"${val:,.0f}" if val > 0 else "—"
+            fc_df = pd.concat([fc_df, pd.DataFrame([_totals_row])], ignore_index=True)
+
             st.dataframe(fc_df, use_container_width=True, hide_index=True)
         else:
             st.info("No forecast rows for this week.")
