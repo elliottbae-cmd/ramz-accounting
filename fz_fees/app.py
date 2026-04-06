@@ -3494,9 +3494,9 @@ elif page == "Sales Forecasts":
 
     # ── Forecast table for selected week ───────────────────────────────────────
     try:
-        _fc_mon  = date.fromisoformat(selected_fc_week)
-        _fc_sun  = _fc_mon + timedelta(days=6)
-        _fc_label = f"{_fc_mon.strftime('%-m/%-d')} – {_fc_sun.strftime('%-m/%-d/%y')}"
+        _fc_thu  = date.fromisoformat(selected_fc_week)
+        _fc_wed  = _fc_thu + timedelta(days=6)
+        _fc_label = f"{_fc_thu.strftime('%-m/%-d')} – {_fc_wed.strftime('%-m/%-d/%y')}"
     except Exception:
         _fc_label = selected_fc_week
 

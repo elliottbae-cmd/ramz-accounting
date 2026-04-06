@@ -262,15 +262,16 @@ def main():
     eia_key = secrets['eia']['api_key']
     today = date.today()
 
-    # Week boundaries: Mon-Sun ISO week
+    # Week boundaries: business week runs Thu–Wed
     last_monday = today - timedelta(days=today.weekday())
     next_monday = last_monday + timedelta(weeks=1)
+    next_thursday = last_monday + timedelta(days=3)   # upcoming Thu (business week start)
     prior_week_start = last_monday - timedelta(weeks=1)
     prior_week_end   = last_monday - timedelta(days=1)
 
     print(f'Monday Job — {today}')
     print(f'  Prior week: {prior_week_start} to {prior_week_end}')
-    print(f'  Forecast week: {next_monday} to {next_monday + timedelta(days=6)}')
+    print(f'  Forecast week: {next_thursday} to {next_thursday + timedelta(days=6)}')
 
     # Load stores
     stores_raw = sb_get_all(url, hdrs, 'reference_data',
@@ -474,7 +475,7 @@ def main():
         loc_type = store.get('location_type') or 'suburban'
 
         # Skip honeymoon stores
-        if pd.Timestamp(next_monday) < honeymoon_end:
+        if pd.Timestamp(next_thursday) < honeymoon_end:
             skipped.append(store_name)
             continue
 
@@ -507,7 +508,7 @@ def main():
         fw_dates = {d: i for i, d in enumerate(fw_daily.get('time', []))}
 
         for day_offset in range(7):
-            d = next_monday + timedelta(days=day_offset)
+            d = next_thursday + timedelta(days=day_offset)
             d_str = d.strftime('%Y-%m-%d')
             d_ts = pd.Timestamp(d)
 
@@ -618,7 +619,7 @@ def main():
         forecast_output.append({
             'location_id': loc_id,
             'store_name': store_name,
-            'week_start': next_monday.strftime('%Y-%m-%d'),
+            'week_start': next_thursday.strftime('%Y-%m-%d'),
             'forecast_generated_at': datetime.now(timezone.utc).isoformat(),
             'model_version': MODEL_VERSION,
             'forecast_low': round(weekly_low, 2),
@@ -641,7 +642,7 @@ def main():
         print(f'  Skipped ({len(skipped)}): {skipped}')
 
     # Print forecast summary
-    print('\n=== FORECAST SUMMARY — Week of', next_monday, '===')
+    print('\n=== FORECAST SUMMARY — Week of', next_thursday, '===')
     print(f'  {"Store":<35} {"Band":<12} {"Point":<12} {"Conf"}')
     print('  ' + '-'*65)
     for fc in sorted(forecast_output, key=lambda x: x['location_id']):
