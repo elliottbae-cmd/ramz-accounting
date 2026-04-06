@@ -126,19 +126,28 @@ def sb_patch(url, hdrs, table, match_col, match_val, data):
 # ---------------------------------------------------------------------------
 def pull_weather_forecast(lat, lon, days=16):
     """Pull forward weather forecast from Open-Meteo."""
-    r = requests.get(
-        'https://api.open-meteo.com/v1/forecast',
-        params={
-            'latitude': lat, 'longitude': lon,
-            'daily': 'temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code',
-            'temperature_unit': 'fahrenheit',
-            'precipitation_unit': 'inch',
-            'timezone': 'America/Chicago',
-            'forecast_days': days,
-        },
-        timeout=15
-    )
-    return r.json().get('daily', {})
+    params = {
+        'latitude': lat, 'longitude': lon,
+        'daily': 'temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code',
+        'temperature_unit': 'fahrenheit',
+        'precipitation_unit': 'inch',
+        'timezone': 'America/Chicago',
+        'forecast_days': days,
+    }
+    for attempt in range(3):
+        try:
+            r = requests.get(
+                'https://api.open-meteo.com/v1/forecast',
+                params=params,
+                timeout=60,
+            )
+            return r.json().get('daily', {})
+        except requests.exceptions.Timeout:
+            if attempt == 2:
+                print(f'    Weather forecast fetch timed out after 3 attempts — skipping ({lat},{lon})')
+                return {}
+            time.sleep(5)
+    return {}
 
 
 def pull_weather_actuals(lat, lon, start_date, end_date):
