@@ -3561,11 +3561,9 @@ elif page == "Sales Forecasts":
         "actual results onto the forecast rows and calculate accuracy metrics."
     )
 
-    # The weekly_data_status uses Thursday week_start; forecast uses Monday week_start.
-    # Thursday = Monday - 4 days.
+    # Both sales_forecasts and weekly_data_status use Thursday week_start — no offset needed.
     try:
-        _bt_monday  = date.fromisoformat(selected_fc_week)
-        _bt_thursday = str(_bt_monday - timedelta(days=4))
+        _bt_thursday = selected_fc_week
     except Exception:
         _bt_thursday = None
 

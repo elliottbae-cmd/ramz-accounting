@@ -271,16 +271,17 @@ def main():
     eia_key = secrets['eia']['api_key']
     today = date.today()
 
-    # Week boundaries: business week runs Thu–Wed
-    last_monday = today - timedelta(days=today.weekday())
-    next_monday = last_monday + timedelta(weeks=1)
-    next_thursday = last_monday + timedelta(days=3)   # upcoming Thu (business week start)
-    prior_week_start = last_monday - timedelta(weeks=1)
-    prior_week_end   = last_monday - timedelta(days=1)
+    # All week boundaries anchored to Thu–Wed business week
+    days_since_thu  = (today.weekday() - 3) % 7        # Mon=4, Tue=5, Wed=6, Thu=0, Fri=1...
+    current_week_thu = today - timedelta(days=days_since_thu)   # start of current business week
+    prior_week_thu   = current_week_thu - timedelta(weeks=1)    # start of prior business week
+    prior_week_wed   = current_week_thu - timedelta(days=1)     # end of prior business week
+    next_week_thu    = current_week_thu + timedelta(weeks=1)    # start of next business week (forecast)
 
     print(f'Monday Job — {today}')
-    print(f'  Prior week: {prior_week_start} to {prior_week_end}')
-    print(f'  Forecast week: {next_thursday} to {next_thursday + timedelta(days=6)}')
+    print(f'  Current business week: {current_week_thu} to {current_week_thu + timedelta(days=6)}')
+    print(f'  Prior week (back-test): {prior_week_thu} to {prior_week_wed}')
+    print(f'  Forecast week: {next_week_thu} to {next_week_thu + timedelta(days=6)}')
 
     # Load stores
     stores_raw = sb_get_all(url, hdrs, 'reference_data',
@@ -349,11 +350,11 @@ def main():
         sb_upsert(url, hdrs, 'gas_price_history', gas_rows)
         print(f'  Gas prices updated: {len(gas_rows)} states')
 
-    # Pull actual weather for prior week
+    # Pull actual weather for prior business week (Thu–Wed)
     weather_rows = []
     for loc_id, store in stores.items():
         lat, lon = float(store['latitude']), float(store['longitude'])
-        daily = pull_weather_actuals(lat, lon, prior_week_start, prior_week_end)
+        daily = pull_weather_actuals(lat, lon, prior_week_thu, prior_week_wed)
         weather_rows.extend(weather_to_rows(loc_id, daily, is_forecast=False))
     if weather_rows:
         sb_upsert(url, hdrs, 'weather_history', weather_rows)
@@ -365,10 +366,10 @@ def main():
     # -----------------------------------------------------------------------
     print('\n--- PHASE 2: Back-fill prior week actuals on forecast rows ---')
 
-    # The weekly_data_status table uses Thursday-based week_start (Thu–Wed cycle)
-    prior_week_thursday = (prior_week_start - timedelta(days=4)).strftime('%Y-%m-%d')
+    # Both upload status and forecast rows use the Thursday-anchored prior week
+    prior_week_thu_str = prior_week_thu.strftime('%Y-%m-%d')
     status_rows = sb_get_all(url, hdrs, 'weekly_data_status',
-                             f'&week_start=eq.{prior_week_thursday}')
+                             f'&week_start=eq.{prior_week_thu_str}')
     status = status_rows[0] if status_rows else {}
     all_uploaded = (
         status.get('sales_uploaded') and
@@ -376,17 +377,16 @@ def main():
         status.get('votg_uploaded')
     )
 
-    prior_week_str = prior_week_start.strftime('%Y-%m-%d')
     forecast_rows = []
 
     if not all_uploaded:
         missing = [k for k in ('sales_uploaded', 'sos_uploaded', 'votg_uploaded')
                    if not status.get(k)]
-        print(f'  Skipping back-fill — uploads not yet complete for week {prior_week_thursday}')
+        print(f'  Skipping back-fill — uploads not yet complete for week {prior_week_thu_str}')
         print(f'  Missing: {missing}')
     else:
         forecast_rows = sb_get_all(url, hdrs, 'sales_forecasts',
-                                   f'&week_start=eq.{prior_week_str}')
+                                   f'&week_start=eq.{prior_week_thu_str}')
         print(f'  Found {len(forecast_rows)} forecast rows to back-fill')
 
     for fc in forecast_rows:
@@ -484,7 +484,7 @@ def main():
         loc_type = store.get('location_type') or 'suburban'
 
         # Skip honeymoon stores
-        if pd.Timestamp(next_thursday) < honeymoon_end:
+        if pd.Timestamp(next_week_thu) < honeymoon_end:
             skipped.append(store_name)
             continue
 
@@ -517,7 +517,7 @@ def main():
         fw_dates = {d: i for i, d in enumerate(fw_daily.get('time', []))}
 
         for day_offset in range(7):
-            d = next_thursday + timedelta(days=day_offset)
+            d = next_week_thu + timedelta(days=day_offset)
             d_str = d.strftime('%Y-%m-%d')
             d_ts = pd.Timestamp(d)
 
@@ -628,7 +628,7 @@ def main():
         forecast_output.append({
             'location_id': loc_id,
             'store_name': store_name,
-            'week_start': next_thursday.strftime('%Y-%m-%d'),
+            'week_start': next_week_thu.strftime('%Y-%m-%d'),
             'forecast_generated_at': datetime.now(timezone.utc).isoformat(),
             'model_version': MODEL_VERSION,
             'forecast_low': round(weekly_low, 2),
@@ -651,7 +651,7 @@ def main():
         print(f'  Skipped ({len(skipped)}): {skipped}')
 
     # Print forecast summary
-    print('\n=== FORECAST SUMMARY — Week of', next_thursday, '===')
+    print('\n=== FORECAST SUMMARY — Week of', next_week_thu, '===')
     print(f'  {"Store":<35} {"Band":<12} {"Point":<12} {"Conf"}')
     print('  ' + '-'*65)
     for fc in sorted(forecast_output, key=lambda x: x['location_id']):
