@@ -1826,7 +1826,10 @@ elif page == "Store Revenue Bands":
                     _2w_s  = f"${_s['2w']:,.0f}"  if _s.get("2w")  else "N/A"
                     _avg_s = f"${_s['avg']:,.0f}" if _s.get("avg") else "N/A"
                     _py_s  = f"${_s['py']:,.0f}"  if _s.get("py")  else "N/A"
-                    st.markdown(f"**Last Week:** {_lw_s}  \n**2 Wks Ago:** {_2w_s}  \n**Avg (2 wks):** {_avg_s}  \n**Prior Year:** {_py_s}")
+                    st.markdown(f"**Last Week:** {_lw_s}")
+                    st.markdown(f"**2 Wks Ago:** {_2w_s}")
+                    st.markdown(f"**Avg (2 wks):** {_avg_s}")
+                    st.markdown(f"**Prior Year:** {_py_s}")
                     # SoS
                     sos = _sos_last.get(store_id, {})
                     if sos:
