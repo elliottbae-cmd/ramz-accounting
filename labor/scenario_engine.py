@@ -410,19 +410,9 @@ class ScenarioEngine:
 
         latest = float(sg['price_per_gallon'].iloc[-1])
 
-        if scenario in ('conservative', 'optimistic'):
-            return [round(latest, 4)] * N_WEEKS
-
-        # Base: extend the trailing 12-week OLS trend, capped at ±$GAS_CAP
-        recent = sg.tail(12)['price_per_gallon'].values
-        slope  = self._ols_slope(recent)
-
-        result = []
-        for w in range(1, N_WEEKS + 1):
-            val = latest + slope * w
-            val = max(latest - GAS_CAP, min(latest + GAS_CAP, val))
-            result.append(round(val, 4))
-        return result
+        # Gas held constant across all scenarios so the chart isolates the
+        # impact of SOS/VOTG improvements on sales without gas price noise.
+        return [round(latest, 4)] * N_WEEKS
 
     # ── Feature helpers ───────────────────────────────────────────────────────
 
