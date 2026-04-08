@@ -73,27 +73,71 @@ def format_week_label(week_start):
 
 
 # ── Email mode detection ──────────────────────────────────────────────────────
+DAY_NAME_TO_WEEKDAY = {
+    "Monday": 0, "Tuesday": 1, "Wednesday": 2,
+    "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6,
+}
+
+
+def load_app_settings():
+    """Load app_settings from Supabase. Returns dict of {key: value}."""
+    try:
+        resp = sb.table("app_settings").select("key, value").execute()
+        return {r["key"]: r["value"] for r in (resp.data or [])}
+    except Exception as e:
+        print(f"  ⚠ Could not load app_settings: {e}")
+        return {}
+
+
 def get_email_mode():
     """
     Determine which mode to run in.
-    Checks EMAIL_MODE env var first; falls back to day of week.
-      Monday    (weekday 0) → 'initial'
-      Tuesday   (weekday 1) → 'tuesday'
-      Wednesday (weekday 2) → 'wednesday'
+
+    Priority:
+      1. EMAIL_MODE env var (manual dispatch / testing) — always wins if set
+      2. app_settings in Supabase — reads gm_email_send_day to derive mode
+         relative to today:
+           send_day + 0 days → 'initial'
+           send_day + 1 day  → 'tuesday'  (first reminder)
+           send_day + 2 days → 'wednesday' (final reminder)
+      3. Hard fallback to day-of-week (Monday=initial, Tue=tuesday, Wed=wednesday)
+
+    Returns None if today is not a configured send day (script should exit early).
     """
+    # 1. Manual override via env var
     if EMAIL_MODE in ("initial", "tuesday", "wednesday"):
         return EMAIL_MODE
 
-    day = date.today().weekday()
-    if day == 0:
+    # 2. Read configured send day from app_settings
+    settings = load_app_settings()
+    send_day_name = settings.get("gm_email_send_day", "").strip()
+    send_day_num  = DAY_NAME_TO_WEEKDAY.get(send_day_name)
+
+    today = date.today().weekday()
+
+    if send_day_num is not None:
+        delta = (today - send_day_num) % 7
+        if delta == 0:
+            return "initial"
+        elif delta == 1:
+            return "tuesday"
+        elif delta == 2:
+            return "wednesday"
+        else:
+            print(f"Today is not a configured send day (send_day={send_day_name}, delta={delta}). Skipping.")
+            return None
+
+    # 3. Hard fallback — app_settings not configured yet
+    print("WARNING: gm_email_send_day not set in app_settings. Falling back to day-of-week detection.")
+    if today == 0:
         return "initial"
-    elif day == 1:
+    elif today == 1:
         return "tuesday"
-    elif day == 2:
+    elif today == 2:
         return "wednesday"
     else:
-        print(f"WARNING: Script run on an unexpected day (weekday={day}). Defaulting to 'initial'.")
-        return "initial"
+        print(f"WARNING: No configured send day and today (weekday={today}) is not Mon/Tue/Wed. Skipping.")
+        return None
 
 
 # ── Data loaders (direct Supabase, no Streamlit) ─────────────────────────────
@@ -406,14 +450,18 @@ def send_email(to_email, subject, html_body, cc_emails=None):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 def main():
-    mode        = get_email_mode()
+    mode = get_email_mode()
+    if mode is None:
+        print("No emails to send today. Exiting.")
+        return
+
     target_week = get_next_week_start()
     week_label  = format_week_label(target_week)
 
     mode_labels = {
-        "initial":   "Monday Initial Email (GM only)",
-        "tuesday":   "Tuesday Reminder (GM + DM cc)",
-        "wednesday": "Wednesday Final Reminder (GM + DM + CEO cc)",
+        "initial":   "Initial Email (GM only)",
+        "tuesday":   "Reminder Day 1 (GM + DM cc)",
+        "wednesday": "Reminder Day 2 — Final (GM + DM + CEO cc)",
     }
     print(f"\nRam-Z Revenue Band Emails")
     print(f"Mode:  {mode_labels.get(mode, mode)}")
