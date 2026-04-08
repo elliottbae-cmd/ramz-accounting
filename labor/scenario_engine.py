@@ -384,21 +384,22 @@ class ScenarioEngine:
 
         p75 = self._votg_p75
 
+        # Upper target for optimistic: whichever is higher — p75 or current
+        # (so stores already above p75 still show improvement, not a haircut)
+        opt_target = max(p75, current * 1.20)   # at least 20% above current
+
         result = []
         for w in range(1, N_WEEKS + 1):
             if scenario == 'conservative':
                 val = current
             elif scenario == 'base':
+                # base_slope >= 0, so val >= current — never declines
                 val = current + base_slope * w
-                val = max(0.0, min(p75, val))
             else:  # optimistic
-                # Apply 2× the floored trend, with a minimum of ~0.4%/week
-                # growth so the line visibly improves even when trend is flat.
-                # Capped at p75 so it stays realistic.
+                # Steady upward trend: 2× floored slope OR ~0.4%/week minimum
                 opt_slope = max(base_slope * 2.0, current * 0.004)
-                val = current + opt_slope * w
-                val = max(0.0, min(p75, val))
-            result.append(round(val, 2))
+                val = min(current + opt_slope * w, opt_target)
+            result.append(round(max(0.0, val), 2))
         return result
 
     def _project_gas(self, state, scenario):
