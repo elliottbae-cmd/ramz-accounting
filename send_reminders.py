@@ -126,14 +126,22 @@ def load_submitted_store_ids(week_start):
 
 def load_store_performance(location_id, target_week):
     """Load sales, SoS, and VOTG data for a store to populate email snapshot."""
-    four_weeks_ago = target_week - timedelta(weeks=4)
-    eight_weeks_ago = target_week - timedelta(weeks=8)
+    # Anchor to last COMPLETED Thu-Wed week (not the upcoming target week)
+    today = date.today()
+    days_since_thu = (today.weekday() - 3) % 7
+    current_week_start = today - timedelta(days=days_since_thu)
+    last_complete_week  = current_week_start - timedelta(weeks=1)  # most recently closed week
+    two_weeks_ago_week  = current_week_start - timedelta(weeks=2)
+    py_week             = last_complete_week - timedelta(weeks=52)  # same week prior year
 
-    # ── Sales (aggregate daily sales into Thu–Wed weeks) ──────────────────────
+    four_weeks_ago = current_week_start - timedelta(weeks=4)
+    eight_weeks_ago = current_week_start - timedelta(weeks=8)
+
+    # ── Recent sales (last 8 completed weeks) ─────────────────────────────────
     sales_resp = sb.table("store_sales").select("sale_date,net_sales").eq(
         "location_id", location_id
     ).gte("sale_date", str(eight_weeks_ago)).lt(
-        "sale_date", str(target_week)
+        "sale_date", str(current_week_start)   # exclude current incomplete week
     ).execute()
 
     week_sales = {}
@@ -143,13 +151,17 @@ def load_store_performance(location_id, target_week):
         w = d - timedelta(days=days_since_thu)
         week_sales[w] = week_sales.get(w, 0) + float(row.get("net_sales") or 0)
 
-    prev1 = target_week - timedelta(weeks=1)
-    prev2 = target_week - timedelta(weeks=2)
-    py_wk = target_week - timedelta(weeks=52)
+    # ── Prior year sales (separate query — ~52 weeks back) ────────────────────
+    py_week_end = py_week + timedelta(days=7)
+    py_resp = sb.table("store_sales").select("sale_date,net_sales").eq(
+        "location_id", location_id
+    ).gte("sale_date", str(py_week)).lt("sale_date", str(py_week_end)).execute()
 
-    prev_week_1_sales = week_sales.get(prev1) or None
-    prev_week_2_sales = week_sales.get(prev2) or None
-    py_sales          = week_sales.get(py_wk) or None
+    py_total = sum(float(r.get("net_sales") or 0) for r in (py_resp.data or []))
+    py_sales = py_total if py_total > 0 else None
+
+    prev_week_1_sales = week_sales.get(last_complete_week) or None
+    prev_week_2_sales = week_sales.get(two_weeks_ago_week) or None
     vals = [v for v in [prev_week_1_sales, prev_week_2_sales] if v is not None]
     avg_recent_sales  = sum(vals) / len(vals) if vals else None
 
@@ -158,7 +170,7 @@ def load_store_performance(location_id, target_week):
         "week_start,good_shift_rank,total_stores,total_time"
     ).eq("location_id", location_id).gte(
         "week_start", str(four_weeks_ago)
-    ).lt("week_start", str(target_week)).order("week_start", desc=True).execute()
+    ).lt("week_start", str(current_week_start)).order("week_start", desc=True).execute()
 
     sos_rows = sos_resp.data or []
     last_week_sos_rank = sos_total_stores = avg_sos = None
@@ -187,7 +199,7 @@ def load_store_performance(location_id, target_week):
         "week_start,total_negative_reviews,votg_rank,total_stores"
     ).eq("location_id", location_id).gte(
         "week_start", str(four_weeks_ago)
-    ).lt("week_start", str(target_week)).order("week_start", desc=True).execute()
+    ).lt("week_start", str(current_week_start)).order("week_start", desc=True).execute()
 
     votg_rows = votg_resp.data or []
     last_week_votg_rank = votg_total_stores = avg_negative_reviews = None
