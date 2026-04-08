@@ -2654,30 +2654,35 @@ elif page == "Email Settings":
             gm_deadline = st.selectbox("GM Deadline Day", DAYS_OF_WEEK,
                 index=DAYS_OF_WEEK.index(settings.get("gm_deadline_day", "Wednesday")))
         with col2:
-            dm_deadline = st.selectbox("DM Deadline Day", DAYS_OF_WEEK,
-                index=DAYS_OF_WEEK.index(settings.get("dm_deadline_day", "Thursday")))
             ceo_email = st.text_input("CEO Email (for escalation)", value=settings.get("ceo_email", ""))
+            # DM deadline is always GM deadline + 1 day — derived automatically
+            gm_deadline_idx = DAYS_OF_WEEK.index(settings.get("gm_deadline_day", "Wednesday"))
+            dm_deadline_day = DAYS_OF_WEEK[(gm_deadline_idx + 1) % 7]
+            st.caption(f"DM Deadline Day: **{dm_deadline_day}** (always GM Deadline + 1)")
 
         st.subheader("Reminder Times")
+        st.caption("Apply to reminder days (Day 2 and Day 3 of the cadence).")
         r1, r2, r3 = st.columns(3)
         with r1:
-            reminder_1 = st.text_input("Reminder 1 (next morning)", value=settings.get("reminder_1_time", "08:00"))
+            reminder_1 = st.text_input("Reminder 1 (morning)", value=settings.get("reminder_1_time", "08:00"))
         with r2:
             reminder_2 = st.text_input("Reminder 2 (midday)", value=settings.get("reminder_2_time", "12:00"))
         with r3:
-            reminder_3 = st.text_input("Reminder 3 (evening + escalation)", value=settings.get("reminder_3_time", "17:00"))
+            reminder_3 = st.text_input("Reminder 3 (evening)", value=settings.get("reminder_3_time", "17:00"))
 
         save_btn = st.form_submit_button("Save Settings", type="primary")
 
     if save_btn:
-        save_app_setting("gm_email_send_day", gm_send_day)
-        save_app_setting("gm_deadline_day", gm_deadline)
-        save_app_setting("dm_deadline_day", dm_deadline)
-        save_app_setting("ceo_email", ceo_email)
-        save_app_setting("reminder_1_time", reminder_1)
-        save_app_setting("reminder_2_time", reminder_2)
-        save_app_setting("reminder_3_time", reminder_3)
-        st.success("Email settings saved!")
+        gm_deadline_idx  = DAYS_OF_WEEK.index(gm_deadline)
+        dm_deadline_day  = DAYS_OF_WEEK[(gm_deadline_idx + 1) % 7]
+        save_app_setting("gm_email_send_day",  gm_send_day)
+        save_app_setting("gm_deadline_day",    gm_deadline)
+        save_app_setting("dm_deadline_day",    dm_deadline_day)  # auto-derived
+        save_app_setting("ceo_email",          ceo_email)
+        save_app_setting("reminder_1_time",    reminder_1)
+        save_app_setting("reminder_2_time",    reminder_2)
+        save_app_setting("reminder_3_time",    reminder_3)
+        st.success(f"Email settings saved! DM Deadline auto-set to {dm_deadline_day}.")
         st.cache_data.clear()
         st.rerun()
 
