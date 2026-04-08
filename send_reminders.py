@@ -41,7 +41,7 @@ SUPABASE_URL     = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY     = os.environ.get("SUPABASE_KEY", "")
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 FROM_EMAIL       = os.environ.get("SENDGRID_FROM_EMAIL", "")
-GM_PORTAL_URL    = os.environ.get("GM_PORTAL_URL", "https://elliott-cicubk897qxxajza5am7vn.streamlit.app")
+GM_PORTAL_URL    = os.environ.get("GM_PORTAL_URL", "https://ramz-gm-select.streamlit.app")
 CEO_EMAIL        = os.environ.get("CEO_EMAIL", "")
 EMAIL_MODE       = os.environ.get("EMAIL_MODE", "").strip().lower()
 
