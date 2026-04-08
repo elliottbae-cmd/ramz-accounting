@@ -1764,13 +1764,12 @@ elif page == "Store Revenue Bands":
             with cols[0]:
                 st.text(store_id)
             with cols[1]:
-                st.text_input(
-                    "",
-                    value=store_name,
-                    disabled=True,
-                    label_visibility="hidden",
-                    help=_build_tooltip(store_id),
-                    key=f"tip_{store_id}",
+                _tip = _build_tooltip(store_id).replace('"', "'").replace("\n", "&#10;")
+                st.markdown(
+                    f'<span title="{_tip}" style="cursor:help;">'
+                    f'{store_name}&nbsp;<span style="color:#C49A5C;font-size:12px;">ⓘ</span>'
+                    f'</span>',
+                    unsafe_allow_html=True,
                 )
 
             for i, (w, status) in enumerate(zip(weeks, week_statuses)):
