@@ -455,6 +455,24 @@ def main():
 
         portal_url = f"{GM_PORTAL_URL}?token={token}" if token else GM_PORTAL_URL
         subject    = build_subject(store_name, week_label, mode)
+
+        # Ensure a submission record exists in rev_band_submissions so the
+        # portal can look up the token and identify the store + week.
+        if token:
+            try:
+                existing = sb.table("rev_band_submissions").select("id").eq(
+                    "token", token
+                ).eq("week_start", str(target_week)).execute()
+                if not existing.data:
+                    sb.table("rev_band_submissions").insert({
+                        "location_id": loc_id,
+                        "week_start":  str(target_week),
+                        "token":       token,
+                        "status":      "pending_gm",
+                    }).execute()
+            except Exception as e:
+                print(f"  ⚠ Could not create submission record for {store_name}: {e}")
+
         perf       = load_store_performance(loc_id, target_week)
         html_body  = build_email_html(store_name, gm_name, week_label, portal_url, mode, perf)
 
