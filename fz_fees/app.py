@@ -1652,6 +1652,105 @@ elif page == "Store Revenue Bands":
                 st.markdown(f"**{label}**<br><span class='week-open'>Open</span>", unsafe_allow_html=True)
     st.divider()
 
+    # --- Load tooltip data (submissions + performance) ---
+    _next_week = weeks[1] if len(weeks) > 1 else None
+    _submissions = {}
+    _sos_last    = {}
+    _votg_last   = {}
+
+    try:
+        from supabase_db import get_supabase as _get_sb
+        _sb = _get_sb()
+        if _next_week:
+            _sub_resp = _sb.table("rev_band_submissions").select("*").eq(
+                "week_start", str(_next_week)).execute()
+            _submissions = {r["location_id"]: r for r in (_sub_resp.data or [])}
+
+        _sos_resp = _sb.table("store_sos_weekly").select(
+            "location_id,week_start,good_shift_rank,total_stores,total_time"
+        ).gte("week_start", str(current_week - timedelta(weeks=4))).lt(
+            "week_start", str(current_week)).order("week_start", desc=True).execute()
+        for _r in (_sos_resp.data or []):
+            if _r["location_id"] not in _sos_last:
+                _sos_last[_r["location_id"]] = _r
+
+        _votg_resp = _sb.table("store_votg_weekly").select(
+            "location_id,week_start,votg_rank,total_stores,total_negative_reviews"
+        ).gte("week_start", str(current_week - timedelta(weeks=4))).lt(
+            "week_start", str(current_week)).order("week_start", desc=True).execute()
+        for _r in (_votg_resp.data or []):
+            if _r["location_id"] not in _votg_last:
+                _votg_last[_r["location_id"]] = _r
+    except Exception:
+        pass
+
+    # Compute last 2 weeks sales per store from cached data
+    _sales_raw = _cached_store_sales()
+    _lw_start  = current_week - timedelta(weeks=1)
+    _2w_start  = current_week - timedelta(weeks=2)
+    _store_sales_map = {}
+    if not _sales_raw.empty and "sale_date" in _sales_raw.columns:
+        _sales_raw["sale_date"] = pd.to_datetime(_sales_raw["sale_date"])
+        for _sid, _grp in _sales_raw.groupby("location_id"):
+            _lw = _grp[(_grp["sale_date"] >= str(_lw_start)) & (_grp["sale_date"] < str(current_week))]["net_sales"].sum()
+            _2w = _grp[(_grp["sale_date"] >= str(_2w_start)) & (_grp["sale_date"] < str(_lw_start))]["net_sales"].sum()
+            _store_sales_map[_sid] = {"lw": _lw if _lw > 0 else None, "2w": _2w if _2w > 0 else None}
+
+    def _build_tooltip(store_id):
+        sub    = _submissions.get(store_id, {})
+        status = sub.get("status", "")
+
+        # GM status
+        if not sub or status == "pending_gm":
+            gm_line = "GM: ⏳ Not submitted"
+        else:
+            gm_line = f"GM: ✅ Submitted — {sub.get('selected_band', '—')}"
+
+        # DM status
+        override = sub.get("dm_override_band")
+        if override:
+            dm_line = f"DM: 🔄 Override — {override}"
+        elif status in ("pending_admin", "approved"):
+            dm_line = "DM: ✅ Approved"
+        elif status == "pending_dm":
+            dm_line = "DM: ⏳ Pending review"
+        else:
+            dm_line = "DM: —"
+
+        # Sales
+        s = _store_sales_map.get(store_id, {})
+        lw  = f"${s['lw']:,.0f}"  if s.get("lw")  else "N/A"
+        tw  = f"${s['2w']:,.0f}"  if s.get("2w")  else "N/A"
+
+        # SoS
+        sos = _sos_last.get(store_id, {})
+        if sos:
+            tt = str(sos.get("total_time") or "")
+            sos_min = "N/A"
+            if ":" in tt:
+                try:
+                    m, s2 = tt.split(":")
+                    sos_min = f"{(int(m)*60+int(s2))/60:.1f} min"
+                except Exception:
+                    pass
+            sos_line = f"SoS: {sos_min} | Rank {sos.get('good_shift_rank','?')} of {sos.get('total_stores','?')}"
+        else:
+            sos_line = "SoS: N/A"
+
+        # VOTG
+        votg = _votg_last.get(store_id, {})
+        if votg:
+            votg_line = f"VOTG Rank: {votg.get('votg_rank','?')} of {votg.get('total_stores','?')} | Neg Reviews: {votg.get('total_negative_reviews','?')}"
+        else:
+            votg_line = "VOTG: N/A"
+
+        return (
+            f"{gm_line}\n{dm_line}\n\n"
+            f"Last Week Sales: {lw}\n"
+            f"2 Weeks Ago: {tw}\n\n"
+            f"{sos_line}\n{votg_line}"
+        )
+
     # --- Grid form ---
     with st.form("revenue_bands_grid"):
         grid_data = {str(w): {} for w in weeks}
@@ -1678,12 +1777,15 @@ elif page == "Store Revenue Bands":
                         st.text(existing_band)
                         grid_data[w_str][store_id] = existing_band
                     else:
+                        # Add tooltip on next week's column only
+                        _help = _build_tooltip(store_id) if w == _next_week else None
                         grid_data[w_str][store_id] = st.selectbox(
                             f"Band {store_id} {w_str}",
                             BAND_OPTIONS,
                             index=band_idx,
                             key=f"band_{store_id}_{w_str}",
                             label_visibility="collapsed",
+                            help=_help,
                         )
 
         st.divider()
