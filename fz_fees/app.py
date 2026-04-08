@@ -3900,17 +3900,24 @@ elif page == "Sales Scenario Analysis":
     if not _show_all and _sc_choice:
         _plot_df = _plot_df[_plot_df['scenario'] == _sc_choice]
 
-    # Portfolio: sum across all stores by scenario + week
+    # Portfolio: sum forecast_point; use sqrt-of-sum-of-variances for the
+    # confidence band so it reflects portfolio diversification rather than
+    # naively stacking each store's individual interval (which inflates the
+    # band ~5x vs the statistically correct portfolio-level uncertainty).
     if _view_mode == "Portfolio":
-        _chart_df = (
+        _plot_df['_half_width'] = (_plot_df['forecast_high'] - _plot_df['forecast_low']) / 2
+        _port_agg = (
             _plot_df
             .groupby(['scenario', 'week_num', 'week_start'], as_index=False)
             .agg(
                 forecast_point=('forecast_point', 'sum'),
-                forecast_low=('forecast_low',   'sum'),
-                forecast_high=('forecast_high',  'sum'),
+                _var_sum=('_half_width', lambda x: (x ** 2).sum()),
             )
         )
+        _port_agg['_port_hw']    = _port_agg['_var_sum'].apply(lambda v: v ** 0.5)
+        _port_agg['forecast_low']  = (_port_agg['forecast_point'] - _port_agg['_port_hw']).clip(lower=0)
+        _port_agg['forecast_high'] = _port_agg['forecast_point'] + _port_agg['_port_hw']
+        _chart_df = _port_agg.drop(columns=['_var_sum', '_port_hw'])
         _chart_title = "Portfolio — Weekly Sales Projection"
     else:
         _chart_df   = _plot_df[_plot_df['location_id'] == _sel_store].copy()
