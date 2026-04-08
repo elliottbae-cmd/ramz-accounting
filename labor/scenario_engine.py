@@ -375,6 +375,13 @@ class ScenarioEngine:
             current = float(np.mean(vals[-4:]))
             slope   = self._ols_slope(vals[-12:] if len(vals) >= 12 else vals)
 
+        # Floor the base slope at 0 — if recent trend is negative (declining
+        # VOTG), hold flat rather than projecting continued deterioration.
+        # Rationale: operational improvements observed over the past 6 months
+        # are the strategic direction; short-term noise shouldn't drive a
+        # declining forecast in the base case.
+        base_slope = max(0.0, slope)
+
         p75 = self._votg_p75
 
         result = []
@@ -382,11 +389,15 @@ class ScenarioEngine:
             if scenario == 'conservative':
                 val = current
             elif scenario == 'base':
-                val = current + slope * w
+                val = current + base_slope * w
                 val = max(0.0, min(p75, val))
             else:  # optimistic
-                val = current + (p75 - current) * (w / N_WEEKS)
-                val = max(0.0, val)
+                # Apply 2× the floored trend, with a minimum of ~0.4%/week
+                # growth so the line visibly improves even when trend is flat.
+                # Capped at p75 so it stays realistic.
+                opt_slope = max(base_slope * 2.0, current * 0.004)
+                val = current + opt_slope * w
+                val = max(0.0, min(p75, val))
             result.append(round(val, 2))
         return result
 
