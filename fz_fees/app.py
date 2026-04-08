@@ -594,6 +594,7 @@ ALL_PAGES = {
         "Upload SoS",
         "Upload VOTG",
         "Sales Forecasts",
+        "Sales Scenario Analysis",
     ],
 }
 
@@ -3782,3 +3783,260 @@ elif page == "Sales Forecasts":
                 st.success(f"✅ Back-test complete — updated {_n} store forecast rows.")
                 st.cache_data.clear()
                 st.rerun()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Sales Scenario Analysis  (Admin)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Sales Scenario Analysis":
+    if not user_is_admin:
+        st.error("You do not have permission to access this page.")
+        st.stop()
+
+    import os
+    import altair as alt
+    from scenario_engine import ScenarioEngine, SCENARIOS, MODEL_PATH
+
+    st.title("📊 Sales Scenario Analysis")
+    st.caption(
+        "6-month forward-looking projection using the live LightGBM model. "
+        "Scenarios update automatically after each monthly model retrain."
+    )
+
+    # ── Load data (cached; invalidates when model file is updated) ────────────
+    @st.cache_data(ttl=1800, show_spinner="Running 6-month projections…")
+    def _sc_load(_sb, _mtime):
+        """
+        _sb    : supabase client (underscore → not hashed by Streamlit)
+        _mtime : model file modification time — acts as the cache-bust key
+        """
+        engine         = ScenarioEngine(_sb)
+        results_df     = engine.run_all_scenarios()
+        meta           = engine.get_model_meta()
+        port_assump    = {sc: engine.get_assumption_summary(sc) for sc in SCENARIOS}
+        store_assump   = {
+            loc_id: {sc: engine.get_assumption_summary(sc, loc_id) for sc in SCENARIOS}
+            for loc_id in engine.stores
+        }
+        store_names    = {
+            loc_id: s['store_name'] for loc_id, s in engine.stores.items()
+        }
+        return results_df, meta, port_assump, store_assump, store_names
+
+    _sb_sc      = sb  # Supabase client already initialised earlier in app.py
+    _model_mtime = os.path.getmtime(str(MODEL_PATH))
+
+    try:
+        _sc_df, _sc_meta, _port_assump, _store_assump, _store_names = \
+            _sc_load(_sb_sc, _model_mtime)
+    except Exception as _sc_err:
+        st.error(f"Failed to run scenario engine: {_sc_err}")
+        st.stop()
+
+    if _sc_df.empty:
+        st.warning("No forecast data returned — ensure stores have sales history uploaded.")
+        st.stop()
+
+    # ── Model info badge ──────────────────────────────────────────────────────
+    _mv   = _sc_meta.get("model_version", "v1")
+    _mape = _sc_meta.get("overall_mape", "—")
+    _bacc = _sc_meta.get("band_accuracy", "—")
+    _tr   = _sc_meta.get("train_rows", 0)
+    st.caption(
+        f"🤖 Model **{_mv}** &nbsp;|&nbsp; "
+        f"MAPE **{_mape}%** &nbsp;|&nbsp; "
+        f"Band accuracy **{_bacc}%** &nbsp;|&nbsp; "
+        f"Trained on **{_tr:,}** rows &nbsp;|&nbsp; "
+        f"Horizon **26 weeks**"
+    )
+    st.divider()
+
+    # ── Controls ──────────────────────────────────────────────────────────────
+    _ctrl1, _ctrl2, _ctrl3 = st.columns([1, 1, 2])
+
+    with _ctrl1:
+        _view_mode = st.radio("View", ["Portfolio", "Per Store"], horizontal=True)
+
+    with _ctrl2:
+        _show_all = st.checkbox("Overlay all 3 scenarios", value=True)
+        if not _show_all:
+            _sc_choice = st.selectbox(
+                "Scenario",
+                ["conservative", "base", "optimistic"],
+                index=1,
+                format_func=lambda s: s.capitalize(),
+            )
+        else:
+            _sc_choice = None
+
+    with _ctrl3:
+        if _view_mode == "Per Store":
+            _sorted_stores = sorted(_store_names.items(), key=lambda x: x[1])
+            _store_options  = [loc for loc, _ in _sorted_stores]
+            _store_labels   = {loc: name for loc, name in _sorted_stores}
+            _sel_store = st.selectbox(
+                "Store",
+                _store_options,
+                format_func=lambda x: _store_labels.get(x, x),
+            )
+        else:
+            _sel_store = None
+
+    st.divider()
+
+    # ── Prepare chart data ────────────────────────────────────────────────────
+    _plot_df = _sc_df.copy()
+    _plot_df['week_start'] = pd.to_datetime(_plot_df['week_start'])
+
+    # Filter to selected scenario(s)
+    if not _show_all and _sc_choice:
+        _plot_df = _plot_df[_plot_df['scenario'] == _sc_choice]
+
+    # Portfolio: sum across all stores by scenario + week
+    if _view_mode == "Portfolio":
+        _chart_df = (
+            _plot_df
+            .groupby(['scenario', 'week_num', 'week_start'], as_index=False)
+            .agg(
+                forecast_point=('forecast_point', 'sum'),
+                forecast_low=('forecast_low',   'sum'),
+                forecast_high=('forecast_high',  'sum'),
+            )
+        )
+        _chart_title = "Portfolio — Weekly Sales Projection"
+    else:
+        _chart_df   = _plot_df[_plot_df['location_id'] == _sel_store].copy()
+        _chart_title = f"{_store_labels.get(_sel_store, _sel_store)} — Weekly Sales Projection"
+
+    # ── Altair chart ──────────────────────────────────────────────────────────
+    _sc_colors = {
+        'conservative': '#4A90D9',
+        'base':         '#27AE60',
+        'optimistic':   '#E67E22',
+    }
+    _color_scale = alt.Scale(
+        domain=list(_sc_colors.keys()),
+        range=list(_sc_colors.values()),
+    )
+    _color_enc = alt.Color(
+        'scenario:N',
+        scale=_color_scale,
+        legend=alt.Legend(
+            title='Scenario',
+            orient='top-right',
+            labelExpr="datum.value == 'conservative' ? 'Conservative' : "
+                       "datum.value == 'base' ? 'Base' : 'Optimistic'",
+        ),
+    )
+
+    _band = (
+        alt.Chart(_chart_df)
+        .mark_area(opacity=0.12)
+        .encode(
+            x=alt.X('week_start:T', title='Week Starting',
+                     axis=alt.Axis(format='%b %d', labelAngle=-45)),
+            y=alt.Y('forecast_low:Q',  title='Weekly Sales',
+                     axis=alt.Axis(format='$,.0f')),
+            y2=alt.Y2('forecast_high:Q'),
+            color=_color_enc,
+        )
+    )
+
+    _line = (
+        alt.Chart(_chart_df)
+        .mark_line(strokeWidth=2.5)
+        .encode(
+            x=alt.X('week_start:T'),
+            y=alt.Y('forecast_point:Q',
+                     axis=alt.Axis(format='$,.0f')),
+            color=_color_enc,
+            tooltip=[
+                alt.Tooltip('week_start:T',     title='Week',     format='%b %d, %Y'),
+                alt.Tooltip('scenario:N',        title='Scenario'),
+                alt.Tooltip('forecast_point:Q',  title='Projection', format='$,.0f'),
+                alt.Tooltip('forecast_low:Q',    title='Low',        format='$,.0f'),
+                alt.Tooltip('forecast_high:Q',   title='High',       format='$,.0f'),
+            ],
+        )
+    )
+
+    _chart = (
+        alt.layer(_band, _line)
+        .properties(
+            height=420,
+            title=alt.TitleParams(
+                _chart_title,
+                fontSize=15,
+                anchor='start',
+            ),
+        )
+        .resolve_scale(y='shared')
+    )
+
+    st.altair_chart(_chart, use_container_width=True)
+
+    st.caption(
+        "Shaded bands show the widening confidence interval "
+        "(±13.5% at week 1 → ±34% at week 26). "
+        "Optimistic band carries an additional 15% buffer."
+    )
+
+    # ── Key Assumptions expander ──────────────────────────────────────────────
+    with st.expander("📋 Key Assumptions", expanded=False):
+        _assump_src = (
+            _store_assump.get(_sel_store, {})
+            if _view_mode == "Per Store" and _sel_store
+            else _port_assump
+        )
+
+        _assump_rows = {
+            "SOS Today (good-shift %)": lambda a: f"{a['sos_week1']*100:.1f}%",
+            "SOS at Week 26":           lambda a: f"{a['sos_week26']*100:.1f}%",
+            "VOTG Today (guests/neg)":  lambda a: f"{a['votg_week1']:.0f}",
+            "VOTG at Week 26":          lambda a: f"{a['votg_week26']:.0f}",
+            "Gas Price Today":          lambda a: f"${a['gas_week1']:.3f}",
+            "Gas Price at Week 26":     lambda a: f"${a['gas_week26']:.3f}",
+            "Weather Source":           lambda a: a['weather_src'],
+            "Confidence Band":          lambda a: f"{a['conf_week1']} → {a['conf_week26']}",
+        }
+
+        _assump_display = {"Assumption": list(_assump_rows.keys())}
+        for sc in SCENARIOS:
+            a = _assump_src.get(sc, {})
+            _assump_display[sc.capitalize()] = [
+                fn(a) if a else "—" for fn in _assump_rows.values()
+            ]
+
+        st.dataframe(
+            pd.DataFrame(_assump_display).set_index("Assumption"),
+            use_container_width=True,
+        )
+
+    # ── Weekly detail table ───────────────────────────────────────────────────
+    st.subheader("Weekly Detail")
+
+    _tbl_df = _chart_df.copy()
+    _tbl_df['week_start'] = _tbl_df['week_start'].dt.strftime('%Y-%m-%d')
+    _tbl_df['forecast_point'] = _tbl_df['forecast_point'].apply(lambda v: f"${v:,.0f}")
+    _tbl_df['forecast_low']   = _tbl_df['forecast_low'].apply(  lambda v: f"${v:,.0f}")
+    _tbl_df['forecast_high']  = _tbl_df['forecast_high'].apply( lambda v: f"${v:,.0f}")
+    _tbl_df['scenario']       = _tbl_df['scenario'].str.capitalize()
+
+    _tbl_df = _tbl_df.rename(columns={
+        'scenario':       'Scenario',
+        'week_num':       'Week #',
+        'week_start':     'Week Starting',
+        'forecast_point': 'Projection',
+        'forecast_low':   'Low',
+        'forecast_high':  'High',
+    })
+
+    _display_cols = ['Scenario', 'Week #', 'Week Starting', 'Projection', 'Low', 'High']
+    if _view_mode == "Per Store" and 'recommended_band' in _chart_df.columns:
+        _tbl_df['Band'] = _chart_df['recommended_band'].values
+        _display_cols.append('Band')
+
+    st.dataframe(
+        _tbl_df[_display_cols].reset_index(drop=True),
+        use_container_width=True,
+        hide_index=True,
+    )
