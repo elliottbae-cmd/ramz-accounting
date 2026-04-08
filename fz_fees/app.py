@@ -3796,11 +3796,19 @@ elif page == "Sales Scenario Analysis":
     import altair as alt
     from scenario_engine import ScenarioEngine, SCENARIOS, MODEL_PATH
 
-    st.title("📊 Sales Scenario Analysis")
-    st.caption(
-        "6-month forward-looking projection using the live LightGBM model. "
-        "Scenarios update automatically after each monthly model retrain."
-    )
+    _sc_title_col, _sc_refresh_col = st.columns([6, 1])
+    with _sc_title_col:
+        st.title("📊 Sales Scenario Analysis")
+        st.caption(
+            "6-month forward-looking projection using the live LightGBM model. "
+            "Scenarios update automatically after each monthly model retrain."
+        )
+    with _sc_refresh_col:
+        st.write("")
+        st.write("")
+        if st.button("🔄 Refresh", key="sc_refresh", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
 
     # ── Load data (cached; invalidates when model file is updated) ────────────
     @st.cache_data(ttl=1800, show_spinner="Running 6-month projections…")
