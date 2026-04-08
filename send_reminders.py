@@ -89,55 +89,85 @@ def load_app_settings():
         return {}
 
 
+def _current_ct_hour():
+    """Return the current hour (0-23) in US Central Time."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/Chicago")).hour
+    except Exception:
+        # Fallback: approximate CDT (UTC-5). Accurate Apr–Nov.
+        return (datetime.now(timezone.utc).hour - 5) % 24
+
+
+def _parse_hour(time_str, default):
+    """Parse 'HH:MM' string to integer hour. Returns default on failure."""
+    try:
+        return int(str(time_str).split(":")[0])
+    except (ValueError, AttributeError, IndexError):
+        return default
+
+
 def get_email_mode():
     """
     Determine which mode to run in.
 
     Priority:
       1. EMAIL_MODE env var (manual dispatch / testing) — always wins if set
-      2. app_settings in Supabase — reads gm_email_send_day to derive mode
-         relative to today:
-           send_day + 0 days → 'initial'
-           send_day + 1 day  → 'tuesday'  (first reminder)
-           send_day + 2 days → 'wednesday' (final reminder)
-      3. Hard fallback to day-of-week (Monday=initial, Tue=tuesday, Wed=wednesday)
+      2. app_settings in Supabase — reads gm_email_send_day + reminder times:
+           send_day + 0 days → 'initial'   (fires at reminder_1_time only)
+           send_day + 1 day  → 'tuesday'   (fires at reminder_1/2/3 times)
+           send_day + 2 days → 'wednesday' (fires at reminder_1/2/3 times)
+      3. Hard fallback to day-of-week if app_settings not configured
 
-    Returns None if today is not a configured send day (script should exit early).
+    Returns None if today/time is not a configured send window (script exits early).
     """
-    # 1. Manual override via env var
+    # 1. Manual override via env var — skip time check
     if EMAIL_MODE in ("initial", "tuesday", "wednesday"):
         return EMAIL_MODE
 
-    # 2. Read configured send day from app_settings
-    settings = load_app_settings()
+    # 2. Load settings
+    settings      = load_app_settings()
     send_day_name = settings.get("gm_email_send_day", "").strip()
     send_day_num  = DAY_NAME_TO_WEEKDAY.get(send_day_name)
+    today         = date.today().weekday()
 
-    today = date.today().weekday()
-
+    # ── Determine delta (days since send day) ────────────────────────────────
     if send_day_num is not None:
         delta = (today - send_day_num) % 7
-        if delta == 0:
-            return "initial"
-        elif delta == 1:
-            return "tuesday"
-        elif delta == 2:
-            return "wednesday"
-        else:
-            print(f"Today is not a configured send day (send_day={send_day_name}, delta={delta}). Skipping.")
+        if delta > 2:
+            print(f"Today is not a configured send day (send_day={send_day_name}). Skipping.")
             return None
-
-    # 3. Hard fallback — app_settings not configured yet
-    print("WARNING: gm_email_send_day not set in app_settings. Falling back to day-of-week detection.")
-    if today == 0:
-        return "initial"
-    elif today == 1:
-        return "tuesday"
-    elif today == 2:
-        return "wednesday"
     else:
-        print(f"WARNING: No configured send day and today (weekday={today}) is not Mon/Tue/Wed. Skipping.")
+        # Hard fallback — app_settings not configured yet
+        print("WARNING: gm_email_send_day not set in app_settings. Falling back to day-of-week.")
+        fallback = {0: 0, 1: 1, 2: 2}
+        if today not in fallback:
+            print(f"WARNING: Today (weekday={today}) is not Mon/Tue/Wed. Skipping.")
+            return None
+        delta = fallback[today]
+
+    # ── Check current CT hour against configured reminder windows ────────────
+    r1 = _parse_hour(settings.get("reminder_1_time", "08:00"), 8)
+    r2 = _parse_hour(settings.get("reminder_2_time", "12:00"), 12)
+    r3 = _parse_hour(settings.get("reminder_3_time", "17:00"), 17)
+    current_hour = _current_ct_hour()
+
+    if delta == 0:
+        # Initial day — one send at the morning reminder time only
+        allowed = {r1}
+        mode    = "initial"
+    elif delta == 1:
+        allowed = {r1, r2, r3}
+        mode    = "tuesday"
+    else:  # delta == 2
+        allowed = {r1, r2, r3}
+        mode    = "wednesday"
+
+    if current_hour not in allowed:
+        print(f"Current CT hour ({current_hour}) not in send hours {sorted(allowed)}. Skipping.")
         return None
+
+    return mode
 
 
 # ── Data loaders (direct Supabase, no Streamlit) ─────────────────────────────

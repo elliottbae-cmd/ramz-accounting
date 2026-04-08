@@ -15,18 +15,12 @@ on:
           - "wednesday"  # Wednesday final reminder — GM + DM + CEO cc
 
   # ── Scheduled triggers ─────────────────────────────────────────────────────
-  # Fires Mon–Thu at 8am, noon, and 5pm CT (covers any send day configured
-  # in Email Settings). send_reminders.py reads app_settings.gm_email_send_day
-  # and exits early if today is not a configured send day.
-  #
-  # All times UTC. Ram-Z is Central Time:
-  #   CDT (Apr–Nov): UTC-5  →  8am CT = 13:00 UTC | Noon CT = 17:00 UTC | 5pm CT = 22:00 UTC
-  #   CST (Nov–Mar): UTC-6  →  8am CT = 14:00 UTC | Noon CT = 18:00 UTC | 5pm CT = 23:00 UTC
-  #
+  # Fires every hour Mon–Thu (UTC). send_reminders.py reads gm_email_send_day
+  # and reminder_1/2/3_time from app_settings and skips if the current CT
+  # hour doesn't match a configured send window. Change send day and times
+  # from the Email Settings page in the app — no yml changes needed.
   schedule:
-    - cron: "0 13 * * 1-4"   # 8am CT  Mon–Thu
-    - cron: "0 17 * * 1-4"   # Noon CT Mon–Thu
-    - cron: "0 22 * * 1-4"   # 5pm CT  Mon–Thu
+    - cron: "0 * * * 1-4"    # Every hour Mon–Thu (UTC)
 
 jobs:
   send-reminders:
