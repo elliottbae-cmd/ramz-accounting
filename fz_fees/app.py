@@ -1777,16 +1777,23 @@ elif page == "Store Revenue Bands":
                     else:
                         st.markdown("**DM:** —")
                     st.divider()
-                    # Sales
+                    # Sales — label each row with its date range
                     _s = _store_sales_map.get(store_id, {})
                     _lw_s  = f"${_s['lw']:,.0f}"  if _s.get("lw")  else "N/A"
                     _2w_s  = f"${_s['2w']:,.0f}"  if _s.get("2w")  else "N/A"
                     _avg_s = f"${_s['avg']:,.0f}" if _s.get("avg") else "N/A"
                     _py_s  = f"${_s['py']:,.0f}"  if _s.get("py")  else "N/A"
-                    st.markdown(f"**Last Week:** {_lw_s}")
-                    st.markdown(f"**2 Wks Ago:** {_2w_s}")
+                    # Build compact date labels  e.g. "3/26–4/1"
+                    def _wk_label(start):
+                        end = start + timedelta(days=6)
+                        return f"{start.month}/{start.day}–{end.month}/{end.day}"
+                    _lw_lbl = _wk_label(_lw_start)
+                    _2w_lbl = _wk_label(_2w_start)
+                    _py_lbl = _wk_label(_py_week)
+                    st.markdown(f"**Last Week** ({_lw_lbl}): {_lw_s}")
+                    st.markdown(f"**2 Wks Ago** ({_2w_lbl}): {_2w_s}")
                     st.markdown(f"**Avg (2 wks):** {_avg_s}")
-                    st.markdown(f"**Prior Year:** {_py_s}")
+                    st.markdown(f"**Prior Year** ({_py_lbl}): {_py_s}")
                     # SoS
                     sos = _sos_last.get(store_id, {})
                     if sos:
