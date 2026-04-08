@@ -1765,10 +1765,10 @@ elif page == "Store Revenue Bands":
                 st.text(store_id)
             with cols[1]:
                 st.text_input(
-                    "store",
+                    "",
                     value=store_name,
                     disabled=True,
-                    label_visibility="collapsed",
+                    label_visibility="hidden",
                     help=_build_tooltip(store_id),
                     key=f"tip_{store_id}",
                 )
