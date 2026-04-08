@@ -355,7 +355,7 @@ def delete_week_lock(week_start):
         raise
 
 
-def override_locked_value(week_start, location_id, field, new_value):
+def override_locked_value(week_start, location_id, field, new_value, user_email=""):
     """Override a single field in a locked week's config. Returns old value."""
     valid_fields = {"dm", "revenue_band", "hourly_goal"}
     if field not in valid_fields:

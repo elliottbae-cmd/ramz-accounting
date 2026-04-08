@@ -130,12 +130,25 @@ def _cached_weekly_actuals():
 
 @st.cache_data(ttl=300)
 def _cached_store_sales():
-    """Load all store sales data. TTL=5min — heavier table, changes less often."""
+    """Load store sales data (last 52 weeks) aggregated to weekly totals.
+    TTL=5min — heavier table, changes less often."""
     from supabase_db import get_supabase
     sb = get_supabase()
+    cutoff = str(date.today() - timedelta(weeks=52))
     try:
-        resp = sb.table("store_sales").select("*").execute()
-        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+        resp = sb.table("store_sales").select(
+            "location_id,sale_date,net_sales"
+        ).gte("sale_date", cutoff).execute()
+        if not resp.data:
+            return pd.DataFrame()
+        df = pd.DataFrame(resp.data)
+        # Aggregate daily rows → Thu-anchored weekly totals
+        df["sale_date"] = pd.to_datetime(df["sale_date"])
+        df["net_sales"] = pd.to_numeric(df["net_sales"], errors="coerce").fillna(0)
+        df["days_since_thu"] = (df["sale_date"].dt.weekday - 3) % 7
+        df["week_start"] = (df["sale_date"] - pd.to_timedelta(df["days_since_thu"], unit="D")).dt.date.astype(str)
+        weekly = df.groupby(["location_id", "week_start"], as_index=False)["net_sales"].sum()
+        return weekly
     except Exception:
         return pd.DataFrame()
 
@@ -1278,8 +1291,7 @@ elif page == "AVS Performance - DMs":
 
     locked_weeks = get_locked_weeks()
     # Only show completed weeks — exclude any week whose Wednesday end date hasn't passed yet
-    _today_dm = date.today()
-    locked_weeks = [w for w in locked_weeks if (w + timedelta(days=6)) < _today_dm]
+    locked_weeks = [w for w in locked_weeks if (w + timedelta(days=6)) < date.today()]
     if not locked_weeks:
         st.info("No completed weekly data available yet. Run AVS reports to build history.")
         st.stop()
@@ -1730,61 +1742,6 @@ elif page == "Store Revenue Bands":
             }
     except Exception:
         pass
-
-    def _build_tooltip(store_id):
-        sub    = _submissions.get(store_id, {})
-        status = sub.get("status", "")
-
-        # GM status
-        if not sub or status == "pending_gm":
-            gm_line = "GM: ⏳ Not submitted"
-        else:
-            gm_line = f"GM: ✅ Submitted — {sub.get('selected_band', '—')}"
-
-        # DM status
-        override = sub.get("dm_override_band")
-        if override:
-            dm_line = f"DM: 🔄 Override — {override}"
-        elif status in ("pending_admin", "approved"):
-            dm_line = "DM: ✅ Approved"
-        elif status == "pending_dm":
-            dm_line = "DM: ⏳ Pending review"
-        else:
-            dm_line = "DM: —"
-
-        # Sales
-        s = _store_sales_map.get(store_id, {})
-        lw  = f"${s['lw']:,.0f}"  if s.get("lw")  else "N/A"
-        tw  = f"${s['2w']:,.0f}"  if s.get("2w")  else "N/A"
-
-        # SoS
-        sos = _sos_last.get(store_id, {})
-        if sos:
-            tt = str(sos.get("total_time") or "")
-            sos_min = "N/A"
-            if ":" in tt:
-                try:
-                    m, s2 = tt.split(":")
-                    sos_min = f"{(int(m)*60+int(s2))/60:.1f} min"
-                except Exception:
-                    pass
-            sos_line = f"SoS: {sos_min} | Rank {sos.get('good_shift_rank','?')} of {sos.get('total_stores','?')}"
-        else:
-            sos_line = "SoS: N/A"
-
-        # VOTG
-        votg = _votg_last.get(store_id, {})
-        if votg:
-            votg_line = f"VOTG Rank: {votg.get('votg_rank','?')} of {votg.get('total_stores','?')} | Neg Reviews: {votg.get('total_negative_reviews','?')}"
-        else:
-            votg_line = "VOTG: N/A"
-
-        return (
-            f"{gm_line}\n{dm_line}\n\n"
-            f"Last Week Sales: {lw}\n"
-            f"2 Weeks Ago: {tw}\n\n"
-            f"{sos_line}\n{votg_line}"
-        )
 
     # --- Grid form ---
     with st.form("revenue_bands_grid"):
@@ -2590,13 +2547,22 @@ elif page == "Rev Band Approvals":
                         with perf_cols[0]:
                             st.markdown("**📈 Sales**")
                             try:
-                                sb = get_supabase()
-                                sales_resp = sb.table("store_sales").select("*").eq(
-                                    "location_id", row["location_id"]
-                                ).order("week_start", desc=True).limit(4).execute()
+                                _ap_sb = get_supabase()
+                                sales_resp = _ap_sb.table("store_sales").select(
+                                    "sale_date,net_sales"
+                                ).eq("location_id", row["location_id"]).order(
+                                    "sale_date", desc=True
+                                ).limit(28).execute()  # up to 4 weeks of daily rows
                                 if sales_resp.data:
-                                    for s in sales_resp.data:
-                                        st.caption(f"Wk {s['week_start']}: ${s.get('net_sales', 0):,.0f}")
+                                    # Aggregate by Thu-Wed week
+                                    from collections import defaultdict as _dd
+                                    _wk_map = _dd(float)
+                                    for _sr in sales_resp.data:
+                                        _sd = date.fromisoformat(str(_sr["sale_date"])[:10])
+                                        _wk = _sd - timedelta(days=(_sd.weekday() - 3) % 7)
+                                        _wk_map[_wk] += float(_sr.get("net_sales") or 0)
+                                    for _wk in sorted(_wk_map, reverse=True)[:4]:
+                                        st.caption(f"Wk {_wk}: ${_wk_map[_wk]:,.0f}")
                                 else:
                                     st.caption("No sales data available")
                             except Exception:
@@ -2606,19 +2572,29 @@ elif page == "Rev Band Approvals":
                         with perf_cols[1]:
                             st.markdown("**⏱️ Speed of Service**")
                             try:
-                                sos_resp = sb.table("store_sos").select("*").eq(
-                                    "location_id", row["location_id"]
-                                ).order("week_start", desc=True).limit(4).execute()
+                                sos_resp = _ap_sb.table("store_sos_weekly").select(
+                                    "week_start,good_shift_rank,total_stores,total_time"
+                                ).eq("location_id", row["location_id"]).order(
+                                    "week_start", desc=True
+                                ).limit(4).execute()
                                 if sos_resp.data:
-                                    sos_vals = [s.get("sos_seconds", 0) for s in sos_resp.data if s.get("sos_seconds")]
-                                    if sos_vals:
-                                        avg_sos = sum(sos_vals) / len(sos_vals)
-                                        st.caption(f"Avg (last {len(sos_vals)} wks): {avg_sos/60:.1f} min")
+                                    secs_list = []
                                     for s in sos_resp.data:
-                                        rank = s.get("sos_rank", "N/A")
+                                        tt = str(s.get("total_time") or "")
+                                        if ":" in tt:
+                                            try:
+                                                _m, _s = tt.split(":")
+                                                secs_list.append(int(_m) * 60 + int(_s))
+                                            except (ValueError, IndexError):
+                                                pass
+                                    if secs_list:
+                                        st.caption(f"Avg (last {len(secs_list)} wks): {sum(secs_list)/len(secs_list)/60:.1f} min")
+                                    for s in sos_resp.data:
+                                        rank = s.get("good_shift_rank", "N/A")
                                         total = s.get("total_stores", "")
-                                        rank_str = f" ({rank} of {total})" if rank != "N/A" and total else ""
-                                        st.caption(f"Wk {s['week_start']}: {s.get('sos_seconds', 0)/60:.1f} min{rank_str}")
+                                        rank_str = f" (#{rank} of {total})" if rank != "N/A" and total else ""
+                                        tt2 = str(s.get("total_time") or "")
+                                        st.caption(f"Wk {s['week_start']}: {tt2}{rank_str}")
                                 else:
                                     st.caption("No SoS data available")
                             except Exception:
@@ -2628,18 +2604,19 @@ elif page == "Rev Band Approvals":
                         with perf_cols[2]:
                             st.markdown("**⭐ Voice of the Guest**")
                             try:
-                                votg_resp = sb.table("store_votg").select("*").eq(
-                                    "location_id", row["location_id"]
-                                ).order("week_start", desc=True).limit(4).execute()
+                                votg_resp = _ap_sb.table("store_votg_weekly").select(
+                                    "week_start,votg_rank,total_stores,total_negative_reviews"
+                                ).eq("location_id", row["location_id"]).order(
+                                    "week_start", desc=True
+                                ).limit(4).execute()
                                 if votg_resp.data:
                                     neg_vals = [v.get("total_negative_reviews", 0) for v in votg_resp.data if v.get("total_negative_reviews") is not None]
                                     if neg_vals:
-                                        avg_neg = sum(neg_vals) / len(neg_vals)
-                                        st.caption(f"Avg Neg Reviews (last {len(neg_vals)} wks): {avg_neg:.1f}")
+                                        st.caption(f"Avg Neg Reviews (last {len(neg_vals)} wks): {sum(neg_vals)/len(neg_vals):.1f}")
                                     for v in votg_resp.data:
                                         rank = v.get("votg_rank", "N/A")
                                         total = v.get("total_stores", "")
-                                        rank_str = f" ({rank} of {total})" if rank != "N/A" and total else ""
+                                        rank_str = f" (#{rank} of {total})" if rank != "N/A" and total else ""
                                         neg = v.get("total_negative_reviews", "N/A")
                                         st.caption(f"Wk {v['week_start']}: {neg} neg reviews{rank_str}")
                                 else:
@@ -3777,12 +3754,12 @@ elif page == "Sales Forecasts":
                 st.cache_data.clear()
                 st.rerun()
     elif not _all_ready:
-        _missing = [
-            k for k, label in [
+        _missing_labels = [
+            label for key, label in [
                 ("sales_uploaded", "Sales"), ("sos_uploaded", "SoS"), ("votg_uploaded", "VOTG")
-            ] if not _bt_status.get(k)
+            ] if not _bt_status.get(key)
         ]
-        st.warning(f"Cannot run back-test — missing uploads: {', '.join(m for _, m in [('sales_uploaded','Sales'),('sos_uploaded','SoS'),('votg_uploaded','VOTG')] if not _bt_status.get(_))}")
+        st.warning(f"Cannot run back-test — missing uploads: {', '.join(_missing_labels)}")
     else:
         if st.button("▶ Run Back-Test for this week", type="primary", use_container_width=True, key="bt_run"):
             with st.spinner("Running back-test — this may take a moment..."):
