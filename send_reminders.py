@@ -120,7 +120,7 @@ def load_submitted_store_ids(week_start):
     ).execute()
     return {
         r["location_id"] for r in (resp.data or [])
-        if r.get("status") not in ("rejected",)
+        if r.get("status") not in ("rejected", "pending_gm")
     }
 
 
