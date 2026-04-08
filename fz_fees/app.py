@@ -3822,7 +3822,8 @@ elif page == "Sales Scenario Analysis":
         }
         return results_df, meta, port_assump, store_assump, store_names
 
-    _sb_sc      = sb  # Supabase client already initialised earlier in app.py
+    from supabase_db import get_supabase as _sc_get_sb
+    _sb_sc       = _sc_get_sb()
     _model_mtime = os.path.getmtime(str(MODEL_PATH))
 
     try:
