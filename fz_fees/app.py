@@ -1635,13 +1635,15 @@ elif page == "Store Revenue Bands":
     .week-open { color: #666; background: #eee; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
     </style>""", unsafe_allow_html=True)
 
-    header_cols = st.columns([2, 3] + [2] * 5)
+    header_cols = st.columns([2, 2.5, 0.5] + [2] * 5)
     with header_cols[0]:
         st.markdown("**Store #**")
     with header_cols[1]:
         st.markdown("**Store Name**")
+    with header_cols[2]:
+        st.markdown("** **")
     for i, (w, label, status) in enumerate(zip(weeks, week_labels, week_statuses)):
-        with header_cols[i + 2]:
+        with header_cols[i + 3]:
             if w == current_week:
                 st.markdown(f"**{label}**<br><span class='week-locked'>Current</span>", unsafe_allow_html=True)
             elif status == "locked":
@@ -1760,17 +1762,49 @@ elif page == "Store Revenue Bands":
             store_name = row["store_name"]
             current_band = row["revenue_band"] if pd.notna(row["revenue_band"]) else "<25k"
 
-            cols = st.columns([2, 3] + [2] * 5)
+            cols = st.columns([2, 2.5, 0.5] + [2] * 5)
             with cols[0]:
                 st.text(store_id)
             with cols[1]:
-                _tip = _build_tooltip(store_id).replace('"', "'").replace("\n", "&#10;")
-                st.markdown(
-                    f'<span title="{_tip}" style="cursor:help;">'
-                    f'{store_name}&nbsp;<span style="color:#C49A5C;font-size:12px;">ⓘ</span>'
-                    f'</span>',
-                    unsafe_allow_html=True,
-                )
+                st.text(store_name)
+            with cols[2]:
+                with st.popover("ⓘ", use_container_width=True):
+                    sub    = _submissions.get(store_id, {})
+                    status_val = sub.get("status", "")
+                    if not sub or status_val == "pending_gm":
+                        st.markdown("**GM:** ⏳ Not submitted")
+                    else:
+                        st.markdown(f"**GM:** ✅ Submitted — `{sub.get('selected_band','—')}`")
+                    override = sub.get("dm_override_band")
+                    if override:
+                        st.markdown(f"**DM:** 🔄 Override — `{override}`")
+                    elif status_val in ("pending_admin", "approved"):
+                        st.markdown("**DM:** ✅ Approved")
+                    elif status_val == "pending_dm":
+                        st.markdown("**DM:** ⏳ Pending review")
+                    else:
+                        st.markdown("**DM:** —")
+                    st.divider()
+                    s = _store_sales_map.get(store_id, {})
+                    col1, col2 = st.columns(2)
+                    col1.metric("Last Week Sales", f"${s['lw']:,.0f}" if s.get("lw") else "N/A")
+                    col2.metric("2 Weeks Ago", f"${s['2w']:,.0f}" if s.get("2w") else "N/A")
+                    sos = _sos_last.get(store_id, {})
+                    if sos:
+                        tt = str(sos.get("total_time") or "")
+                        sos_min = "N/A"
+                        if ":" in tt:
+                            try:
+                                m, s2 = tt.split(":")
+                                sos_min = f"{(int(m)*60+int(s2))/60:.1f} min"
+                            except Exception:
+                                pass
+                        col1.metric("Avg SoS", sos_min)
+                        col2.metric("SoS Rank", f"{sos.get('good_shift_rank','?')} of {sos.get('total_stores','?')}")
+                    votg = _votg_last.get(store_id, {})
+                    if votg:
+                        col1.metric("Neg Reviews", str(votg.get("total_negative_reviews","N/A")))
+                        col2.metric("VOTG Rank", f"{votg.get('votg_rank','?')} of {votg.get('total_stores','?')}")
 
             for i, (w, status) in enumerate(zip(weeks, week_statuses)):
                 w_str = str(w)
@@ -1778,7 +1812,7 @@ elif page == "Store Revenue Bands":
                 existing_band = week_data[w_str].get(store_id, current_band)
                 band_idx = BAND_OPTIONS.index(existing_band) if existing_band in BAND_OPTIONS else 0
 
-                with cols[i + 2]:
+                with cols[i + 3]:
                     if status == "locked" or w == current_week:
                         st.text(existing_band)
                         grid_data[w_str][store_id] = existing_band
@@ -1794,13 +1828,15 @@ elif page == "Store Revenue Bands":
         st.divider()
 
         # Save buttons — one per unlocked week
-        save_cols = st.columns([2, 3] + [2] * 5)
+        save_cols = st.columns([2, 2.5, 0.5] + [2] * 5)
         with save_cols[0]:
             st.write("")  # spacer
         with save_cols[1]:
             st.write("")  # spacer
+        with save_cols[2]:
+            st.write("")  # spacer
         for i, (w, label, status) in enumerate(zip(weeks, week_labels, week_statuses)):
-            with save_cols[i + 2]:
+            with save_cols[i + 3]:
                 if w == current_week or status == "locked":
                     st.write("")  # locked — no button
                 else:
