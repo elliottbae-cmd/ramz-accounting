@@ -1764,7 +1764,14 @@ elif page == "Store Revenue Bands":
             with cols[0]:
                 st.text(store_id)
             with cols[1]:
-                st.text(store_name)
+                st.text_input(
+                    "store",
+                    value=store_name,
+                    disabled=True,
+                    label_visibility="collapsed",
+                    help=_build_tooltip(store_id),
+                    key=f"tip_{store_id}",
+                )
 
             for i, (w, status) in enumerate(zip(weeks, week_statuses)):
                 w_str = str(w)
@@ -1777,15 +1784,12 @@ elif page == "Store Revenue Bands":
                         st.text(existing_band)
                         grid_data[w_str][store_id] = existing_band
                     else:
-                        # Add tooltip on next week's column only
-                        _help = _build_tooltip(store_id) if w == _next_week else None
                         grid_data[w_str][store_id] = st.selectbox(
                             f"Band {store_id} {w_str}",
                             BAND_OPTIONS,
                             index=band_idx,
                             key=f"band_{store_id}_{w_str}",
                             label_visibility="collapsed",
-                            help=_help,
                         )
 
         st.divider()
