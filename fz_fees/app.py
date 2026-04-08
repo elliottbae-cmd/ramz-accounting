@@ -1686,20 +1686,50 @@ elif page == "Store Revenue Bands":
     except Exception:
         pass
 
-    # Compute last 2 weeks sales per store from cached data
-    _sales_raw = _cached_store_sales()
-    _lw_start  = current_week - timedelta(weeks=1)
-    _2w_start  = current_week - timedelta(weeks=2)
+    # Load sales data for tooltip: last 8 weeks + prior year same week
+    _lw_start  = current_week - timedelta(weeks=1)   # last complete week start
+    _2w_start  = current_week - timedelta(weeks=2)   # two weeks ago start
+    _py_week   = _lw_start - timedelta(weeks=52)     # prior year same week
     _store_sales_map = {}
-    if not _sales_raw.empty and "sale_date" in _sales_raw.columns:
-        _sales_raw["sale_date"] = pd.to_datetime(_sales_raw["sale_date"])
-        _lw_ts  = pd.Timestamp(_lw_start)
-        _2w_ts  = pd.Timestamp(_2w_start)
-        _cur_ts = pd.Timestamp(current_week)
-        for _sid, _grp in _sales_raw.groupby("location_id"):
-            _lw = _grp[(_grp["sale_date"] >= _lw_ts) & (_grp["sale_date"] < _cur_ts)]["net_sales"].sum()
-            _2w = _grp[(_grp["sale_date"] >= _2w_ts) & (_grp["sale_date"] < _lw_ts)]["net_sales"].sum()
-            _store_sales_map[_sid] = {"lw": float(_lw) if _lw > 0 else None, "2w": float(_2w) if _2w > 0 else None}
+    try:
+        # Recent sales (last 8 weeks)
+        _recent = _sb.table("store_sales").select("location_id,sale_date,net_sales").gte(
+            "sale_date", str(current_week - timedelta(weeks=8))
+        ).lt("sale_date", str(current_week)).execute().data or []
+
+        # PY sales (same week last year)
+        _py_data = _sb.table("store_sales").select("location_id,sale_date,net_sales").gte(
+            "sale_date", str(_py_week)
+        ).lt("sale_date", str(_py_week + timedelta(weeks=1))).execute().data or []
+
+        # Aggregate recent by store + week bucket
+        from collections import defaultdict
+        _wk_sales = defaultdict(lambda: defaultdict(float))
+        for _r in _recent:
+            _d = date.fromisoformat(str(_r["sale_date"])[:10])
+            _days = (_d.weekday() - 3) % 7
+            _wk = _d - timedelta(days=_days)
+            _wk_sales[_r["location_id"]][_wk] += float(_r.get("net_sales") or 0)
+
+        # Aggregate PY by store
+        _py_by_store = defaultdict(float)
+        for _r in _py_data:
+            _py_by_store[_r["location_id"]] += float(_r.get("net_sales") or 0)
+
+        for _sid, _weeks in _wk_sales.items():
+            _lw_val  = _weeks.get(_lw_start)
+            _2w_val  = _weeks.get(_2w_start)
+            _vals    = [v for v in [_lw_val, _2w_val] if v and v > 0]
+            _avg_val = sum(_vals) / len(_vals) if _vals else None
+            _py_val  = _py_by_store.get(_sid)
+            _store_sales_map[_sid] = {
+                "lw":  _lw_val  if _lw_val  and _lw_val  > 0 else None,
+                "2w":  _2w_val  if _2w_val  and _2w_val  > 0 else None,
+                "avg": _avg_val,
+                "py":  _py_val  if _py_val  and _py_val  > 0 else None,
+            }
+    except Exception:
+        pass
 
     def _build_tooltip(store_id):
         sub    = _submissions.get(store_id, {})
@@ -1792,10 +1822,12 @@ elif page == "Store Revenue Bands":
                     st.divider()
                     # Sales
                     _s = _store_sales_map.get(store_id, {})
-                    _lw_s = f"${_s['lw']:,.0f}" if _s.get("lw") else "N/A"
-                    _2w_s = f"${_s['2w']:,.0f}" if _s.get("2w") else "N/A"
-                    st.markdown(f"**Last Week:** {_lw_s}")
-                    st.markdown(f"**2 Wks Ago:** {_2w_s}")
+                    _lw_s  = f"${_s['lw']:,.0f}"  if _s.get("lw")  else "N/A"
+                    _2w_s  = f"${_s['2w']:,.0f}"  if _s.get("2w")  else "N/A"
+                    _avg_s = f"${_s['avg']:,.0f}" if _s.get("avg") else "N/A"
+                    _py_s  = f"${_s['py']:,.0f}"  if _s.get("py")  else "N/A"
+                    st.markdown(f"**Last Week:** {_lw_s} &nbsp;|&nbsp; **2 Wks Ago:** {_2w_s}")
+                    st.markdown(f"**Avg (2 wks):** {_avg_s} &nbsp;|&nbsp; **Prior Year:** {_py_s}")
                     # SoS
                     sos = _sos_last.get(store_id, {})
                     if sos:
