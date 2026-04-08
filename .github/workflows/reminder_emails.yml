@@ -57,7 +57,8 @@ jobs:
           SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
           SENDGRID_API_KEY:    ${{ secrets.SENDGRID_API_KEY }}
           SENDGRID_FROM_EMAIL: ${{ secrets.SENDGRID_FROM_EMAIL }}
-          GM_PORTAL_URL:       ${{ secrets.GM_PORTAL_URL }}
+          # GM_PORTAL_URL falls back to the default hardcoded in send_reminders.py
+          # Set this secret in GitHub if you ever need to override it.
           CEO_EMAIL:           ${{ secrets.CEO_EMAIL }}
           # Manual dispatch uses the dropdown selection.
           # Scheduled runs auto-detect from day of week.
