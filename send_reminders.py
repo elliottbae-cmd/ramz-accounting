@@ -153,8 +153,8 @@ def get_email_mode():
     current_hour = _current_ct_hour()
 
     if delta == 0:
-        # Initial day — one send at the morning reminder time only
-        allowed = {r1}
+        # Initial day — one send at 2:00 PM CT (hardcoded so ops data is ready)
+        allowed = {14}
         mode    = "initial"
     elif delta == 1:
         allowed = {r1, r2, r3}

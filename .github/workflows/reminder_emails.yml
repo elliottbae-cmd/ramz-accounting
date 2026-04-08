@@ -20,7 +20,7 @@ on:
   # hour doesn't match a configured send window. Change send day and times
   # from the Email Settings page in the app — no yml changes needed.
   schedule:
-    - cron: "0 * * * 1-4"    # Every hour Mon–Thu (UTC)
+    - cron: "0 * * * 1-5"    # Every hour Mon–Fri (UTC)
 
 jobs:
   send-reminders:
