@@ -1693,10 +1693,13 @@ elif page == "Store Revenue Bands":
     _store_sales_map = {}
     if not _sales_raw.empty and "sale_date" in _sales_raw.columns:
         _sales_raw["sale_date"] = pd.to_datetime(_sales_raw["sale_date"])
+        _lw_ts  = pd.Timestamp(_lw_start)
+        _2w_ts  = pd.Timestamp(_2w_start)
+        _cur_ts = pd.Timestamp(current_week)
         for _sid, _grp in _sales_raw.groupby("location_id"):
-            _lw = _grp[(_grp["sale_date"] >= str(_lw_start)) & (_grp["sale_date"] < str(current_week))]["net_sales"].sum()
-            _2w = _grp[(_grp["sale_date"] >= str(_2w_start)) & (_grp["sale_date"] < str(_lw_start))]["net_sales"].sum()
-            _store_sales_map[_sid] = {"lw": _lw if _lw > 0 else None, "2w": _2w if _2w > 0 else None}
+            _lw = _grp[(_grp["sale_date"] >= _lw_ts) & (_grp["sale_date"] < _cur_ts)]["net_sales"].sum()
+            _2w = _grp[(_grp["sale_date"] >= _2w_ts) & (_grp["sale_date"] < _lw_ts)]["net_sales"].sum()
+            _store_sales_map[_sid] = {"lw": float(_lw) if _lw > 0 else None, "2w": float(_2w) if _2w > 0 else None}
 
     def _build_tooltip(store_id):
         sub    = _submissions.get(store_id, {})
@@ -1769,42 +1772,46 @@ elif page == "Store Revenue Bands":
                 st.text(store_name)
             with cols[2]:
                 with st.popover("ⓘ", use_container_width=True):
-                    sub    = _submissions.get(store_id, {})
+                    sub        = _submissions.get(store_id, {})
                     status_val = sub.get("status", "")
+                    # GM status
                     if not sub or status_val == "pending_gm":
                         st.markdown("**GM:** ⏳ Not submitted")
                     else:
-                        st.markdown(f"**GM:** ✅ Submitted — `{sub.get('selected_band','—')}`")
+                        st.markdown(f"**GM:** ✅ `{sub.get('selected_band','—')}`")
+                    # DM status
                     override = sub.get("dm_override_band")
                     if override:
-                        st.markdown(f"**DM:** 🔄 Override — `{override}`")
+                        st.markdown(f"**DM:** 🔄 Override `{override}`")
                     elif status_val in ("pending_admin", "approved"):
                         st.markdown("**DM:** ✅ Approved")
                     elif status_val == "pending_dm":
-                        st.markdown("**DM:** ⏳ Pending review")
+                        st.markdown("**DM:** ⏳ Pending")
                     else:
                         st.markdown("**DM:** —")
                     st.divider()
-                    s = _store_sales_map.get(store_id, {})
-                    col1, col2 = st.columns(2)
-                    col1.metric("Last Week Sales", f"${s['lw']:,.0f}" if s.get("lw") else "N/A")
-                    col2.metric("2 Weeks Ago", f"${s['2w']:,.0f}" if s.get("2w") else "N/A")
+                    # Sales
+                    _s = _store_sales_map.get(store_id, {})
+                    _lw_s = f"${_s['lw']:,.0f}" if _s.get("lw") else "N/A"
+                    _2w_s = f"${_s['2w']:,.0f}" if _s.get("2w") else "N/A"
+                    st.markdown(f"**Last Week:** {_lw_s}")
+                    st.markdown(f"**2 Wks Ago:** {_2w_s}")
+                    # SoS
                     sos = _sos_last.get(store_id, {})
                     if sos:
-                        tt = str(sos.get("total_time") or "")
-                        sos_min = "N/A"
-                        if ":" in tt:
+                        _tt = str(sos.get("total_time") or "")
+                        _sos_min = "N/A"
+                        if ":" in _tt:
                             try:
-                                m, s2 = tt.split(":")
-                                sos_min = f"{(int(m)*60+int(s2))/60:.1f} min"
+                                _m, _s2 = _tt.split(":")
+                                _sos_min = f"{(int(_m)*60+int(_s2))/60:.1f} min"
                             except Exception:
                                 pass
-                        col1.metric("Avg SoS", sos_min)
-                        col2.metric("SoS Rank", f"{sos.get('good_shift_rank','?')} of {sos.get('total_stores','?')}")
+                        st.markdown(f"**SoS:** {_sos_min} — #{sos.get('good_shift_rank','?')} of {sos.get('total_stores','?')}")
+                    # VOTG
                     votg = _votg_last.get(store_id, {})
                     if votg:
-                        col1.metric("Neg Reviews", str(votg.get("total_negative_reviews","N/A")))
-                        col2.metric("VOTG Rank", f"{votg.get('votg_rank','?')} of {votg.get('total_stores','?')}")
+                        st.markdown(f"**VOTG:** {votg.get('total_negative_reviews','?')} neg — #{votg.get('votg_rank','?')} of {votg.get('total_stores','?')}")
 
             for i, (w, status) in enumerate(zip(weeks, week_statuses)):
                 w_str = str(w)
