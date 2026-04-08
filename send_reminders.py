@@ -41,7 +41,7 @@ SUPABASE_URL     = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY     = os.environ.get("SUPABASE_KEY", "")
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 FROM_EMAIL       = os.environ.get("SENDGRID_FROM_EMAIL", "")
-GM_PORTAL_URL    = os.environ.get("GM_PORTAL_URL", "https://ramz-gm-portal.streamlit.app")
+GM_PORTAL_URL    = os.environ.get("GM_PORTAL_URL", "https://elliott-cicubk897qxxajza5am7vn.streamlit.app")
 CEO_EMAIL        = os.environ.get("CEO_EMAIL", "")
 EMAIL_MODE       = os.environ.get("EMAIL_MODE", "").strip().lower()
 
@@ -124,6 +124,97 @@ def load_submitted_store_ids(week_start):
     }
 
 
+def load_store_performance(location_id, target_week):
+    """Load sales, SoS, and VOTG data for a store to populate email snapshot."""
+    four_weeks_ago = target_week - timedelta(weeks=4)
+    eight_weeks_ago = target_week - timedelta(weeks=8)
+
+    # ── Sales (aggregate daily sales into Thu–Wed weeks) ──────────────────────
+    sales_resp = sb.table("store_sales").select("sale_date,net_sales").eq(
+        "location_id", location_id
+    ).gte("sale_date", str(eight_weeks_ago)).lt(
+        "sale_date", str(target_week)
+    ).execute()
+
+    week_sales = {}
+    for row in (sales_resp.data or []):
+        d = date.fromisoformat(row["sale_date"])
+        days_since_thu = (d.weekday() - 3) % 7
+        w = d - timedelta(days=days_since_thu)
+        week_sales[w] = week_sales.get(w, 0) + float(row.get("net_sales") or 0)
+
+    prev1 = target_week - timedelta(weeks=1)
+    prev2 = target_week - timedelta(weeks=2)
+    py_wk = target_week - timedelta(weeks=52)
+
+    prev_week_1_sales = week_sales.get(prev1) or None
+    prev_week_2_sales = week_sales.get(prev2) or None
+    py_sales          = week_sales.get(py_wk) or None
+    vals = [v for v in [prev_week_1_sales, prev_week_2_sales] if v is not None]
+    avg_recent_sales  = sum(vals) / len(vals) if vals else None
+
+    # ── SoS ───────────────────────────────────────────────────────────────────
+    sos_resp = sb.table("store_sos_weekly").select(
+        "week_start,good_shift_rank,total_stores,total_time"
+    ).eq("location_id", location_id).gte(
+        "week_start", str(four_weeks_ago)
+    ).lt("week_start", str(target_week)).order("week_start", desc=True).execute()
+
+    sos_rows = sos_resp.data or []
+    last_week_sos_rank = sos_total_stores = avg_sos = None
+    if sos_rows:
+        last = sos_rows[0]
+        try:
+            last_week_sos_rank = int(last.get("good_shift_rank") or 0)
+            sos_total_stores   = int(last.get("total_stores") or 0)
+        except (ValueError, TypeError):
+            pass
+        # total_time stored as "MM:SS" — convert to seconds for the template
+        secs_list = []
+        for r in sos_rows:
+            tt = str(r.get("total_time") or "")
+            if ":" in tt:
+                try:
+                    m, s = tt.split(":")
+                    secs_list.append(int(m) * 60 + int(s))
+                except (ValueError, IndexError):
+                    pass
+        if secs_list:
+            avg_sos = sum(secs_list) / len(secs_list)
+
+    # ── VOTG ──────────────────────────────────────────────────────────────────
+    votg_resp = sb.table("store_votg_weekly").select(
+        "week_start,total_negative_reviews,votg_rank,total_stores"
+    ).eq("location_id", location_id).gte(
+        "week_start", str(four_weeks_ago)
+    ).lt("week_start", str(target_week)).order("week_start", desc=True).execute()
+
+    votg_rows = votg_resp.data or []
+    last_week_votg_rank = votg_total_stores = avg_negative_reviews = None
+    if votg_rows:
+        last = votg_rows[0]
+        try:
+            last_week_votg_rank = int(last.get("votg_rank") or 0)
+            votg_total_stores   = int(last.get("total_stores") or 0)
+        except (ValueError, TypeError):
+            pass
+        neg = [float(r.get("total_negative_reviews") or 0) for r in votg_rows]
+        avg_negative_reviews = sum(neg) / len(neg) if neg else None
+
+    return dict(
+        py_sales=py_sales,
+        prev_week_1_sales=prev_week_1_sales,
+        prev_week_2_sales=prev_week_2_sales,
+        avg_recent_sales=avg_recent_sales,
+        avg_sos=avg_sos,
+        last_week_sos_rank=last_week_sos_rank,
+        sos_total_stores=sos_total_stores,
+        avg_negative_reviews=avg_negative_reviews,
+        last_week_votg_rank=last_week_votg_rank,
+        votg_total_stores=votg_total_stores,
+    )
+
+
 def log_email(week_start, location_id, to_email, subject, email_type, success, error_msg=""):
     """Write an email log entry to Supabase. Never raises."""
     try:
@@ -142,8 +233,8 @@ def log_email(week_start, location_id, to_email, subject, email_type, success, e
 
 
 # ── HTML email builder ────────────────────────────────────────────────────────
-def build_email_html(store_name, gm_name, week_label, portal_url, mode):
-    """Build branded HTML email. Mode controls subject line urgency and styling."""
+def build_email_html(store_name, gm_name, week_label, portal_url, mode, perf=None):
+    """Build branded HTML email with store performance snapshot."""
     if mode == "initial":
         heading       = "Action Required: Select Your Revenue Band"
         heading_color = "#333333"
@@ -165,6 +256,62 @@ def build_email_html(store_name, gm_name, week_label, portal_url, mode):
             "Failure to respond today will be escalated and logged.</p>"
         )
         btn_color = "#E74C3C"
+
+    # ── Performance snapshot table ────────────────────────────────────────────
+    def fc(val):
+        return f"${val:,.0f}" if val is not None else "N/A"
+
+    def fn(val, dec=1):
+        return f"{val:.{dec}f}" if val is not None else "N/A"
+
+    def rank_str(rank, total):
+        if rank is not None and total is not None:
+            return f"{int(rank)} of {int(total)}"
+        return "N/A"
+
+    p = perf or {}
+    avg_sos_min = fn(p.get("avg_sos") / 60 if p.get("avg_sos") is not None else None) + " min"
+
+    perf_table = f"""
+    <table width="100%" cellpadding="8" cellspacing="0" style="margin:20px 0;border-collapse:collapse;">
+      <tr style="background:#2B3A4E;">
+        <td colspan="2" style="color:#fff;font-size:14px;font-weight:bold;padding:10px 12px;border-radius:4px 4px 0 0;">
+          Store Performance Snapshot
+        </td>
+      </tr>
+      <tr style="background:#f9f9f9;">
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Prior Year — Same Week Sales</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fc(p.get("py_sales"))}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Last Week Sales</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fc(p.get("prev_week_1_sales"))}</td>
+      </tr>
+      <tr style="background:#f9f9f9;">
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Two Weeks Ago Sales</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fc(p.get("prev_week_2_sales"))}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Avg Sales (Last 2 Weeks)</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fc(p.get("avg_recent_sales"))}</td>
+      </tr>
+      <tr style="background:#f9f9f9;">
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Avg Speed of Service (Last 4 Weeks)</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{avg_sos_min}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Speed of Service Rank (Last Week)</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{rank_str(p.get("last_week_sos_rank"), p.get("sos_total_stores"))}</td>
+      </tr>
+      <tr style="background:#f9f9f9;">
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Avg Negative Reviews (Last 4 Weeks)</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fn(p.get("avg_negative_reviews"), 0)}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 12px;color:#666;font-size:13px;">VOTG Rank (Last Week)</td>
+        <td style="padding:8px 12px;color:#333;font-size:13px;font-weight:bold;text-align:right;">{rank_str(p.get("last_week_votg_rank"), p.get("votg_total_stores"))}</td>
+      </tr>
+    </table>"""
 
     return f"""<!DOCTYPE html>
 <html>
@@ -191,6 +338,7 @@ def build_email_html(store_name, gm_name, week_label, portal_url, mode):
       {intro} Please complete your selection for <strong>{store_name}</strong>
       for the week of <strong>{week_label}</strong>.
     </p>
+    {perf_table}
     {final_block}
     <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
     <tr><td align="center">
@@ -295,7 +443,8 @@ def main():
 
         portal_url = f"{GM_PORTAL_URL}?token={token}" if token else GM_PORTAL_URL
         subject    = build_subject(store_name, week_label, mode)
-        html_body  = build_email_html(store_name, gm_name, week_label, portal_url, mode)
+        perf       = load_store_performance(loc_id, target_week)
+        html_body  = build_email_html(store_name, gm_name, week_label, portal_url, mode, perf)
 
         # Build CC list based on escalation day
         cc_emails = []
