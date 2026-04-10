@@ -1700,39 +1700,37 @@ elif page == "Store Revenue Bands":
     except Exception:
         pass
 
-    # Load sales data for tooltip: last 8 weeks + prior year same week
+    # Load sales data for tooltip — use weekly_actuals for recent weeks (more accurate than daily store_sales)
     _lw_start  = current_week - timedelta(weeks=1)   # last complete week start
     _2w_start  = current_week - timedelta(weeks=2)   # two weeks ago start
     _py_week   = _lw_start - timedelta(weeks=52)     # prior year same week
     _store_sales_map = {}
     try:
-        # Recent sales (last 8 weeks)
-        _recent = _sb.table("store_sales").select("location_id,sale_date,net_sales").gte(
-            "sale_date", str(current_week - timedelta(weeks=8))
-        ).lt("sale_date", str(current_week)).execute().data or []
+        from collections import defaultdict
 
-        # PY sales (same week last year)
+        # Recent weekly sales from weekly_actuals (last 2 weeks)
+        _actuals = _sb.table("weekly_actuals").select("location_id,week_start,net_sales").gte(
+            "week_start", str(_2w_start)
+        ).lt("week_start", str(current_week)).execute().data or []
+
+        _wk_sales = defaultdict(lambda: defaultdict(float))
+        for _r in _actuals:
+            _wk = date.fromisoformat(str(_r["week_start"])[:10])
+            _wk_sales[_r["location_id"]][_wk] += float(_r.get("net_sales") or 0)
+
+        # PY sales from store_sales (weekly_actuals doesn't go back a year yet)
         _py_data = _sb.table("store_sales").select("location_id,sale_date,net_sales").gte(
             "sale_date", str(_py_week)
         ).lt("sale_date", str(_py_week + timedelta(weeks=1))).execute().data or []
 
-        # Aggregate recent by store + week bucket
-        from collections import defaultdict
-        _wk_sales = defaultdict(lambda: defaultdict(float))
-        for _r in _recent:
-            _d = date.fromisoformat(str(_r["sale_date"])[:10])
-            _days = (_d.weekday() - 3) % 7
-            _wk = _d - timedelta(days=_days)
-            _wk_sales[_r["location_id"]][_wk] += float(_r.get("net_sales") or 0)
-
-        # Aggregate PY by store
         _py_by_store = defaultdict(float)
         for _r in _py_data:
             _py_by_store[_r["location_id"]] += float(_r.get("net_sales") or 0)
 
-        for _sid, _weeks in _wk_sales.items():
-            _lw_val  = _weeks.get(_lw_start)
-            _2w_val  = _weeks.get(_2w_start)
+        all_store_ids = set(r["location_id"] for r in _actuals)
+        for _sid in all_store_ids:
+            _lw_val  = _wk_sales[_sid].get(_lw_start)
+            _2w_val  = _wk_sales[_sid].get(_2w_start)
             _vals    = [v for v in [_lw_val, _2w_val] if v and v > 0]
             _avg_val = sum(_vals) / len(_vals) if _vals else None
             _py_val  = _py_by_store.get(_sid)
