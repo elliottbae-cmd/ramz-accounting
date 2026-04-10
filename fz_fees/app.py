@@ -1102,6 +1102,7 @@ elif page == "AVS Mid-Week Pulse":
 elif page == "AVS Performance - Store Level":
     st.title("AVS Performance - Store Level")
     st.caption("Compare store performance (Goal vs Actual hours) across weeks.")
+    st.info("📊 **Reading this report:** A **negative** number means the store was **under** their hour goal (favorable). A **positive** number means the store was **over** their hour goal (unfavorable). Stores are ranked by Total Variance — the sum of absolute deviations from goal across all weeks.")
 
     locked_weeks = get_locked_weeks()
     # Only show completed weeks — exclude any week whose Wednesday end date hasn't passed yet
@@ -1245,13 +1246,11 @@ elif page == "AVS Performance - Store Level":
         pivot[wc] = pivot[wc].round(0).astype(int)
 
     # --- Ranking + Total ---
-    # Multi-week: rank by absolute value of Total variance for the period
-    # Single-week: rank by absolute value of that week
-    if len(week_cols) > 1:
-        period_total = pivot[week_cols].sum(axis=1)
-        pivot["_sort_var"] = period_total.abs()
+    # Rank by sum of absolute values across all weeks (Total Variance)
+    if week_cols:
+        pivot["_sort_var"] = pivot[week_cols].abs().sum(axis=1)
     else:
-        pivot["_sort_var"] = pivot[week_cols[0]].abs() if week_cols else 0
+        pivot["_sort_var"] = 0
 
     pivot = pivot.sort_values("_sort_var").reset_index(drop=True)
     pivot.insert(0, "Rank", range(1, len(pivot) + 1))
@@ -1262,12 +1261,13 @@ elif page == "AVS Performance - Store Level":
     pivot = pivot.rename(columns=week_col_map)
     renamed_week_cols = [week_col_map.get(c, c) for c in week_cols]
 
-    # Total column at the end (sum of all weeks shown) — only for multi-week views
+    # Net Total and Total Variance columns at the end — only for multi-week views
     if len(renamed_week_cols) > 1:
-        pivot["Total"] = pivot[renamed_week_cols].sum(axis=1)
+        pivot["Net Total"] = pivot[renamed_week_cols].sum(axis=1)
+        pivot["Total Variance"] = pivot[renamed_week_cols].abs().sum(axis=1)
 
-    # --- Color coding: variance-based (Total is handled inside _color_variance_cells) ---
-    skip_cols = ("Rank", "Store")
+    # --- Color coding: variance-based ---
+    skip_cols = ("Rank", "Store", "Net Total", "Total Variance")
     has_actuals_weeks = set(actuals_filtered["week_start"].unique()) if not actuals_filtered.empty else set()
     styled = pivot.style.apply(
         _color_variance_cells, week_col_map=week_col_map,
