@@ -211,21 +211,19 @@ def load_store_performance(location_id, target_week):
     four_weeks_ago = current_week_start - timedelta(weeks=4)
     eight_weeks_ago = current_week_start - timedelta(weeks=8)
 
-    # ── Recent sales (last 8 completed weeks) ─────────────────────────────────
-    sales_resp = sb.table("store_sales").select("sale_date,net_sales").eq(
+    # ── Recent sales — use weekly_actuals for accuracy (full week totals from AVS upload) ──
+    actuals_resp = sb.table("weekly_actuals").select("week_start,net_sales").eq(
         "location_id", location_id
-    ).gte("sale_date", str(eight_weeks_ago)).lt(
-        "sale_date", str(current_week_start)   # exclude current incomplete week
+    ).gte("week_start", str(two_weeks_ago_week)).lt(
+        "week_start", str(current_week_start)
     ).execute()
 
     week_sales = {}
-    for row in (sales_resp.data or []):
-        d = date.fromisoformat(row["sale_date"])
-        days_since_thu = (d.weekday() - 3) % 7
-        w = d - timedelta(days=days_since_thu)
-        week_sales[w] = week_sales.get(w, 0) + float(row.get("net_sales") or 0)
+    for row in (actuals_resp.data or []):
+        w = date.fromisoformat(str(row["week_start"])[:10])
+        week_sales[w] = float(row.get("net_sales") or 0)
 
-    # ── Prior year sales (separate query — ~52 weeks back) ────────────────────
+    # ── Prior year sales — store_sales (weekly_actuals doesn't go back a year yet) ──
     py_week_end = py_week + timedelta(days=7)
     py_resp = sb.table("store_sales").select("sale_date,net_sales").eq(
         "location_id", location_id
