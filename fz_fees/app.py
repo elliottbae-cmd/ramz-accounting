@@ -2821,7 +2821,10 @@ elif page == "Compliance Report":
                 if isinstance(final_status, str):
                     final_status = final_status.replace("_", " ").title()
 
-                submitted_at = sub.get("submitted_at")
+                # Only count as submitted if GM actually selected a band (status != pending_gm)
+                raw_status   = sub.get("status", "")
+                gm_submitted = raw_status != "pending_gm" and bool(sub.get("selected_band"))
+                submitted_at = sub.get("submitted_at") if gm_submitted else None
                 if submitted_at:
                     try:
                         sub_dt        = pd.Timestamp(submitted_at).to_pydatetime().replace(tzinfo=None)
