@@ -1,0 +1,8 @@
+id,location_id,week_start,selected_band,submitted_at,submitted_by,token,token_expires_at,status,gm_deadline_missed,dm_deadline_missed,dm_approved_at,dm_approved_by,admin_approved_at,admin_approved_by,rejected_at,rejected_by,rejection_reason,dm_override_band
+21,112-0018,2026-04-16,30k-35k,2026-04-10T19:44:04.719468+00:00,,2f3615c8-550c-4317-9e4a-073ec8e9d188,,pending_admin,False,False,2026-04-10T20:00:38.84533+00:00,Renee,,,,,,
+17,112-0001,2026-04-16,30k-35k,2026-04-10T20:05:53.807331+00:00,,db4091cf-fb21-4215-accb-60074f978f33,,pending_admin,False,False,2026-04-10T20:14:31.310877+00:00,Manny,,,,,,
+20,112-0015,2026-04-16,40k-45k,2026-04-10T20:03:48.032201+00:00,,4311b948-b9e7-44d4-9ce7-5122f304ef41,,pending_admin,False,False,2026-04-10T20:22:11.301608+00:00,Cody,,,,,,
+18,112-0002,2026-04-16,35k-40k,2026-04-10T19:51:25.586585+00:00,,3bebf574-481a-45f4-90a2-cce0e81eb689,,pending_admin,False,False,2026-04-10T20:22:27.506185+00:00,Dottie,,,,,,
+22,112-0023,2026-04-16,<25k,2026-04-10T20:07:29.271068+00:00,,8fa400e6-75cc-41cb-a8c9-fa44e384a8d9,,pending_admin,False,False,2026-04-10T20:33:22.505349+00:00,Alex,,,,,,
+23,112-0034,2026-04-16,25k-30k,2026-04-10T19:48:24.655607+00:00,,0c3998e3-fa67-4611-99bb-92520facd5f3,,pending_admin,False,False,2026-04-10T20:36:18.383438+00:00,Miriam,,,,,,
+19,112-0006,2026-04-16,30k-35k,2026-04-10T19:44:34.711271+00:00,,7410e79c-224c-40a2-9d39-5abc051268b6,,pending_admin,False,False,2026-04-10T20:38:07.276805+00:00,Steve,,,,,,
