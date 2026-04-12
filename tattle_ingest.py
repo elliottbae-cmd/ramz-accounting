@@ -118,31 +118,40 @@ def get_tattle_token():
     Tries multiple common OAuth2 endpoint patterns.
     Returns Bearer token string or raises on failure.
     """
-    payload = {
-        "client_id":     TATTLE_CLIENT_KEY,
-        "client_secret": TATTLE_SECRET_KEY,
-        "grant_type":    "client_credentials",
-    }
+    import base64
+
     endpoints = [
         f"{TATTLE_API_BASE}/oauth/token",
         f"{TATTLE_API_BASE}/v2/api/oauth/token",
         f"{TATTLE_API_BASE}/v3/api/oauth/token",
         f"{TATTLE_API_V2}/oauth/token",
+        "https://app.tattleapp.io/oauth/token",
+        "https://auth.tattleapp.io/oauth/token",
+        "https://gettattle.com/oauth/token",
+        "https://gettattle.com/v3/api/oauth/token",
     ]
+
+    # Attempt 1: JSON body with client_id / client_secret
+    payload_json = {
+        "client_id":     TATTLE_CLIENT_KEY,
+        "client_secret": TATTLE_SECRET_KEY,
+        "grant_type":    "client_credentials",
+    }
     for url in endpoints:
         try:
-            r = requests.post(url, json=payload, timeout=15)
+            r = requests.post(url, json=payload_json, timeout=15)
+            print(f"  [DEBUG] POST {url} → {r.status_code} {r.text[:120]}")
             if r.status_code == 200:
                 data = r.json()
                 token = data.get("access_token") or data.get("token")
                 if token:
                     print(f"  ✓ Authenticated via {url}")
                     return token
-        except Exception:
+        except Exception as e:
+            print(f"  [DEBUG] {url} exception: {e}")
             continue
 
-    # If OAuth fails, try basic auth header pattern
-    import base64
+    # Attempt 2: Basic auth header + form body
     creds = base64.b64encode(
         f"{TATTLE_CLIENT_KEY}:{TATTLE_SECRET_KEY}".encode()
     ).decode()
@@ -155,13 +164,36 @@ def get_tattle_token():
                 data="grant_type=client_credentials",
                 timeout=15,
             )
+            print(f"  [DEBUG] Basic POST {url} → {r.status_code} {r.text[:120]}")
             if r.status_code == 200:
                 data = r.json()
                 token = data.get("access_token") or data.get("token")
                 if token:
                     print(f"  ✓ Authenticated (Basic) via {url}")
                     return token
-        except Exception:
+        except Exception as e:
+            print(f"  [DEBUG] Basic {url} exception: {e}")
+            continue
+
+    # Attempt 3: form body with client_key / client_secret field names
+    payload_form = {
+        "client_key":    TATTLE_CLIENT_KEY,
+        "client_secret": TATTLE_SECRET_KEY,
+        "grant_type":    "client_credentials",
+    }
+    for url in endpoints:
+        try:
+            r = requests.post(url, data=payload_form, timeout=15)
+            print(f"  [DEBUG] Form POST {url} → {r.status_code} {r.text[:120]}")
+            if r.status_code == 200:
+                data = r.json()
+                token = (data.get("access_token") or data.get("token")
+                         or data.get("api_token"))
+                if token:
+                    print(f"  ✓ Authenticated (form/client_key) via {url}")
+                    return token
+        except Exception as e:
+            print(f"  [DEBUG] Form {url} exception: {e}")
             continue
 
     raise RuntimeError(
