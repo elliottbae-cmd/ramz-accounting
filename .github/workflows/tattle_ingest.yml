@@ -1,0 +1,76 @@
+name: Tattle Review Ingestion
+
+on:
+  # ── Manual trigger (for testing or backfill) ───────────────────────────────
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Ingestion mode"
+        required: true
+        default: "weekly"
+        type: choice
+        options:
+          - "weekly"    # Last 7 days (default)
+          - "backfill"  # All history from 2023-01-01 (seed run)
+          - "custom"    # Use start/end inputs below
+      start_date:
+        description: "Start date YYYY-MM-DD (custom mode only)"
+        required: false
+        default: ""
+      end_date:
+        description: "End date YYYY-MM-DD (custom mode only)"
+        required: false
+        default: ""
+
+  # ── Scheduled: every Monday at 7 AM CT (13:00 UTC) ────────────────────────
+  # Runs after monday_job.py (which fires at 6 AM CT / 12:00 UTC)
+  schedule:
+    - cron: "0 13 * * 1"
+
+jobs:
+  ingest:
+    name: Pull Tattle ratings & comments
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run weekly ingestion (scheduled)
+        if: github.event_name == 'schedule'
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          TATTLE_CLIENT_KEY:  ${{ secrets.TATTLE_CLIENT_KEY }}
+          TATTLE_SECRET_KEY:  ${{ secrets.TATTLE_SECRET_KEY }}
+        run: python tattle_ingest.py --mode weekly
+
+      - name: Run manual ingestion (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode != 'custom'
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          TATTLE_CLIENT_KEY:  ${{ secrets.TATTLE_CLIENT_KEY }}
+          TATTLE_SECRET_KEY:  ${{ secrets.TATTLE_SECRET_KEY }}
+        run: python tattle_ingest.py --mode ${{ github.event.inputs.mode }}
+
+      - name: Run custom date range (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'custom'
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          TATTLE_CLIENT_KEY:  ${{ secrets.TATTLE_CLIENT_KEY }}
+          TATTLE_SECRET_KEY:  ${{ secrets.TATTLE_SECRET_KEY }}
+        run: |
+          python tattle_ingest.py \
+            --mode custom \
+            --start "${{ github.event.inputs.start_date }}" \
+            --end   "${{ github.event.inputs.end_date }}"
