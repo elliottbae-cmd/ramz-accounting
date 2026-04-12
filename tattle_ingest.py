@@ -36,15 +36,22 @@ TATTLE_CLIENT_KEY = os.environ.get("TATTLE_CLIENT_KEY", "")
 TATTLE_SECRET_KEY = os.environ.get("TATTLE_SECRET_KEY", "")
 TATTLE_MERCHANT_ID = "2668"
 
+# Temporary hardcoded session token for backfill testing.
+# Replace with proper OAuth once Tattle provides the token endpoint.
+TATTLE_SESSION_TOKEN = os.environ.get(
+    "TATTLE_SESSION_TOKEN",
+    "dc4d756ead3e874cd003542768cf1924b06e51f4"
+)
+
 TATTLE_API_BASE  = "https://api.tattleapp.io"
 TATTLE_API_V2    = "https://gettattle.com/v2/api"
 
 # Rate limiting — be friendly to the API
 REQUEST_DELAY = 0.25   # seconds between comment fetches
 
-if not all([SUPABASE_URL, SUPABASE_KEY, TATTLE_CLIENT_KEY, TATTLE_SECRET_KEY]):
+if not all([SUPABASE_URL, SUPABASE_KEY]):
     print("ERROR: Missing required env vars.")
-    print("  Required: SUPABASE_URL, SUPABASE_KEY, TATTLE_CLIENT_KEY, TATTLE_SECRET_KEY")
+    print("  Required: SUPABASE_URL, SUPABASE_KEY")
     sys.exit(1)
 
 
@@ -114,9 +121,20 @@ def sb_get_all_existing_ids():
 # ---------------------------------------------------------------------------
 def get_tattle_token():
     """
+    Returns Tattle Bearer token.
+    Currently uses a hardcoded session token grabbed from DevTools.
+    TODO: Replace with proper OAuth2 once Tattle provides the token endpoint.
+    """
+    print("  Using session token (temporary — replace with OAuth once endpoint is known).")
+    return TATTLE_SESSION_TOKEN
+
+
+def _get_tattle_token_via_oauth():
+    """
     Authenticate with Tattle using client key + secret.
     Tries multiple common OAuth2 endpoint patterns.
     Returns Bearer token string or raises on failure.
+    (Unused until Tattle confirms the correct OAuth endpoint.)
     """
     import base64
 
