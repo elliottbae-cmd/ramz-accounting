@@ -283,15 +283,22 @@ def fetch_surveys(token, start_date, end_date):
     return all_surveys
 
 
-def fetch_comment(token, survey_id):
+def fetch_snapshots(token, survey_id):
     """
-    Fetch the text comment for a single survey response.
-    Returns comment string or None if no comment.
+    Fetch category-level snapshots (ratings + comments) for a single survey.
+    Each survey has multiple snapshots — one per category (Food Quality,
+    Hospitality, Speed of Service, Accuracy, Cleanliness, Atmosphere, etc.)
+
+    Returns:
+        snapshots  — list of dicts with category label, rating, comment
+        comment    — all category comments concatenated into one string
     """
-    url = f"{TATTLE_API_V2}/customer-questionnaire-comment"
+    url = f"{TATTLE_API_V2}/customer-questionnaire-snapshots"
     params = {
         "customer_questionnaire_id": survey_id,
-        "expand": "user",
+        "expand": "snapshot,customer_questionnaire,questionnaire,questionnaire_snapshots",
+        "order":  "sort_ord ASC, date_time_created ASC",
+        "notNull": "customer_questionnaire_snapshots.rating",
     }
     try:
         r = requests.get(
@@ -301,22 +308,35 @@ def fetch_comment(token, survey_id):
             timeout=15,
         )
         if r.status_code != 200:
-            return None
-        data = r.json()
-        comments = (data.get("_embedded", {})
-                        .get("customer_questionnaire_comment", []))
-        if not comments:
-            return None
-        # Collect all comment text fields
-        texts = []
-        for c in comments:
-            text = c.get("comment") or c.get("text") or c.get("body") or ""
-            if text.strip():
-                texts.append(text.strip())
-        return " | ".join(texts) if texts else None
+            return None, None
+
+        data     = r.json()
+        items    = (data.get("_embedded", {})
+                       .get("customer_questionnaire_snapshots", []))
+        if not items:
+            return None, None
+
+        snapshots = []
+        texts     = []
+        for item in items:
+            snap   = item.get("snapshot", {})
+            label  = snap.get("label", "")
+            rating = item.get("rating")
+            text   = (item.get("comment") or "").strip()
+            snapshots.append({
+                "category": label,
+                "rating":   rating,
+                "comment":  text or None,
+            })
+            if text:
+                texts.append(f"[{label}] {text}")
+
+        combined_comment = " | ".join(texts) if texts else None
+        return snapshots, combined_comment
+
     except Exception as e:
-        print(f"    [WARN] Comment fetch failed for survey {survey_id}: {e}")
-        return None
+        print(f"    [WARN] Snapshot fetch failed for survey {survey_id}: {e}")
+        return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -357,18 +377,18 @@ def ingest(start_date, end_date, mode="weekly"):
         print("\n✓ Nothing new to ingest.")
         return
 
-    # Fetch comments and build rows
+    # Fetch snapshots and build rows
     rows = []
     ingested_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    print(f"\nFetching comments for {len(new_surveys)} surveys...")
+    print(f"\nFetching snapshots for {len(new_surveys)} surveys...")
     for i, survey in enumerate(new_surveys, 1):
         survey_id = survey["id"]
 
         if i % 50 == 0 or i == len(new_surveys):
             print(f"  {i}/{len(new_surveys)} surveys processed...")
 
-        comment = fetch_comment(token, survey_id)
+        snapshots, comment = fetch_snapshots(token, survey_id)
         time.sleep(REQUEST_DELAY)
 
         row = {
@@ -384,6 +404,7 @@ def ingest(start_date, end_date, mode="weekly"):
             "day_part_label":      survey.get("dayPartLabel", ""),
             "channel_label":       survey.get("channelLabel", ""),
             "comment":             comment,
+            "snapshots":           json.dumps(snapshots) if snapshots else None,
             "sentiment_themes":    None,
             "sentiment_summary":   None,
             "ingested_at":         ingested_at,
@@ -396,7 +417,7 @@ def ingest(start_date, end_date, mode="weekly"):
 
     with_comments = sum(1 for r in rows if r["comment"])
     print(f"\n✓ Done.")
-    print(f"  Ingested : {len(rows)} surveys")
+    print(f"  Ingested  : {len(rows)} surveys")
     print(f"  With comments : {with_comments}")
     print(f"  Without comments: {len(rows) - with_comments}")
 
