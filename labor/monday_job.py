@@ -20,14 +20,17 @@ import os
 import time
 from datetime import date, timedelta, datetime, timezone
 
-sys.path.insert(0, 'C:/Users/BretElliott/ramz-accounting')
+import pathlib
+_HERE = pathlib.Path(__file__).resolve().parent   # labor/
+_ROOT = _HERE.parent                               # ramz-accounting/
+sys.path.insert(0, str(_ROOT))
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-SECRETS_PATH = 'C:/Users/BretElliott/ramz-accounting/.streamlit/secrets.toml'
-MODEL_PATH   = 'C:/Users/BretElliott/ramz-accounting/labor/lgbm_model_v1.pkl'
-META_PATH    = 'C:/Users/BretElliott/ramz-accounting/labor/model_meta_v1.json'
+SECRETS_PATH = str(_ROOT / '.streamlit' / 'secrets.toml')
+MODEL_PATH   = str(_HERE / 'lgbm_model_v1.pkl')
+META_PATH    = str(_HERE / 'model_meta_v1.json')
 MODEL_VERSION = 'v1'
 
 BANDS = [
@@ -40,19 +43,7 @@ BANDS = [
     ('50k+',    50000, 9_999_999),
 ]
 
-STATE_MAP = {
-    '112-0001': 'OK', '112-0002': 'OK', '112-0003': 'OK', '112-0004': 'OK',
-    '112-0005': 'OK', '112-0031': 'OK', '112-0035': 'OK', '112-0038': 'OK',
-    '112-0006': 'TX', '112-0007': 'TX', '112-0008': 'TX', '112-0009': 'TX',
-    '112-0010': 'TX', '112-0011': 'TX', '112-0032': 'TX', '112-0033': 'TX',
-    '112-0034': 'TX', '112-0036': 'TX', '112-0037': 'TX',
-    '112-0012': 'OH', '112-0013': 'OH', '112-0014': 'OH', '112-0015': 'OH',
-    '112-0016': 'OH', '112-0017': 'OH', '112-0018': 'OH', '112-0019': 'OH',
-    '112-0020': 'OH', '112-0021': 'OH', '112-0022': 'OH', '112-0023': 'OH',
-    '112-0024': 'OH', '112-0025': 'OH', '112-0026': 'OH', '112-0028': 'OH',
-    '112-0029': 'OH', '112-0030': 'OH',
-    '112-0027': 'KY',
-}
+from constants import STATE_MAP
 
 ANCHOR_PAYROLL = pd.Timestamp('2023-01-06')
 
@@ -662,22 +653,48 @@ def main():
     # Only runs when all three uploads are complete for the prior week.
     # -----------------------------------------------------------------------
     if today.day <= 7 and all_uploaded:
-        print('\n--- PHASE 4: Monthly model retrain ---')
+        print('\n--- PHASE 4: Monthly model retrain + climate normals refresh ---')
+        import subprocess
+
+        # Step 1: Rebuild feature matrix
         try:
-            import subprocess
             result = subprocess.run(
-                ['python', 'C:/Users/BretElliott/ramz-accounting/labor/build_features.py'],
+                ['python', str(_HERE / 'build_features.py')],
                 capture_output=True, text=True, timeout=300
             )
             print(result.stdout[-500:] if result.stdout else '')
+            if result.returncode != 0:
+                print(f'  [WARN] build_features.py exited {result.returncode}: {result.stderr[-300:]}')
+        except Exception as e:
+            print(f'  [WARN] build_features.py failed: {e}')
+
+        # Step 2: Retrain model
+        try:
             result2 = subprocess.run(
-                ['python', 'C:/Users/BretElliott/ramz-accounting/labor/train_model.py'],
+                ['python', str(_HERE / 'train_model.py')],
                 capture_output=True, text=True, timeout=300
             )
             print(result2.stdout[-500:] if result2.stdout else '')
-            print('  Model retrained successfully.')
+            if result2.returncode != 0:
+                print(f'  [WARN] train_model.py exited {result2.returncode}: {result2.stderr[-300:]}')
+            else:
+                print('  Model retrained successfully.')
         except Exception as e:
-            print(f'  Retrain failed: {e}')
+            print(f'  [WARN] train_model.py failed: {e}')
+
+        # Step 3: Refresh climate normals (3-yr rolling averages per store)
+        try:
+            result3 = subprocess.run(
+                ['python', str(_HERE / 'seed_climate_normals.py')],
+                capture_output=True, text=True, timeout=600  # longer — calls Open-Meteo per store
+            )
+            print(result3.stdout[-500:] if result3.stdout else '')
+            if result3.returncode != 0:
+                print(f'  [WARN] seed_climate_normals.py exited {result3.returncode}: {result3.stderr[-300:]}')
+            else:
+                print('  Climate normals refreshed successfully.')
+        except Exception as e:
+            print(f'  [WARN] seed_climate_normals.py failed: {e}')
 
     print(f'\nMonday job complete — {datetime.now().strftime("%Y-%m-%d %H:%M")}')
 

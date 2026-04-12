@@ -19,6 +19,7 @@ Usage:
 """
 
 import json
+import pathlib
 import requests
 import toml
 import time
@@ -28,7 +29,9 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-SECRETS_PATH = 'C:/Users/BretElliott/ramz-accounting/.streamlit/secrets.toml'
+_HERE = pathlib.Path(__file__).resolve().parent   # labor/
+_ROOT = _HERE.parent                               # ramz-accounting/
+SECRETS_PATH = str(_ROOT / '.streamlit' / 'secrets.toml')
 YEARS_BACK   = 3   # pull this many full years of historical weather
 
 

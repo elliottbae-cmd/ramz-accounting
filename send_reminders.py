@@ -187,6 +187,14 @@ def load_dm_emails():
     return {r["dm_name"]: r.get("email", "") for r in (resp.data or [])}
 
 
+def load_pending_dm_submissions(week_start):
+    """Return list of rev_band_submissions with status=pending_dm for the given week."""
+    resp = sb.table("rev_band_submissions").select("*").eq(
+        "week_start", str(week_start)
+    ).eq("status", "pending_dm").execute()
+    return resp.data or []
+
+
 def load_submitted_store_ids(week_start):
     """Return set of location_ids that have already submitted (non-rejected) for the week."""
     resp = sb.table("rev_band_submissions").select("location_id, status").eq(
@@ -476,6 +484,158 @@ def send_email(to_email, subject, html_body, cc_emails=None):
     return response.status_code in (200, 201, 202)
 
 
+# ── DM reminder email builder ─────────────────────────────────────────────────
+def build_dm_reminder_email(dm_name, pending_stores, week_label, dm_portal_url):
+    """Build branded HTML reminder email for a DM listing stores awaiting approval."""
+    store_rows = ""
+    for i, item in enumerate(pending_stores):
+        bg = "#f9f9f9" if i % 2 == 0 else "#ffffff"
+        band_changed = item["selected_band"] != item["current_band"]
+        band_style = "font-weight:bold;color:#E67E22;" if band_changed else "font-weight:bold;"
+        store_rows += f"""
+      <tr style="background:{bg};">
+        <td style="padding:8px 12px;font-size:13px;color:#333;">{item['store_name']}</td>
+        <td style="padding:8px 12px;font-size:13px;color:#333;text-align:center;">{item['current_band']}</td>
+        <td style="padding:8px 12px;font-size:13px;{band_style}text-align:center;">{item['selected_band']}</td>
+      </tr>"""
+
+    count = len(pending_stores)
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,Helvetica,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:20px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0"
+       style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1);">
+  <!-- Header -->
+  <tr><td style="background:#2B3A4E;padding:24px 32px;text-align:center;">
+    <h1 style="margin:0;color:#C49A5C;font-size:28px;font-weight:bold;letter-spacing:1px;">RAM-Z</h1>
+    <p style="margin:4px 0 0;color:#fff;font-size:12px;letter-spacing:2px;">RESTAURANT GROUP</p>
+  </td></tr>
+  <!-- Banner -->
+  <tr><td style="background:#C49A5C;padding:12px 32px;text-align:center;">
+    <p style="margin:0;color:#fff;font-size:16px;font-weight:bold;">Revenue Band Approvals Pending</p>
+  </td></tr>
+  <!-- Body -->
+  <tr><td style="padding:32px;">
+    <p style="color:#E67E22;font-size:18px;font-weight:bold;margin-top:0;">Action Required \u2014 {count} Store(s) Awaiting Your Approval</p>
+    <p style="color:#333;font-size:15px;line-height:1.6;">Hi {dm_name},</p>
+    <p style="color:#333;font-size:15px;line-height:1.6;">
+      The following store(s) have submitted their revenue band selection for
+      <strong>{week_label}</strong> and are awaiting your approval.
+      Bands highlighted in orange indicate a change from the current band.
+    </p>
+    <table width="100%" cellpadding="8" cellspacing="0" style="margin:20px 0;border-collapse:collapse;">
+      <tr style="background:#2B3A4E;">
+        <td style="color:#fff;font-size:13px;font-weight:bold;padding:10px 12px;">Store</td>
+        <td style="color:#fff;font-size:13px;font-weight:bold;padding:10px 12px;text-align:center;">Current Band</td>
+        <td style="color:#fff;font-size:13px;font-weight:bold;padding:10px 12px;text-align:center;">Selected Band</td>
+      </tr>
+      {store_rows}
+    </table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+    <tr><td align="center">
+      <a href="{dm_portal_url}"
+         style="display:inline-block;background:#C49A5C;color:#fff;
+                font-size:16px;font-weight:bold;padding:14px 40px;
+                text-decoration:none;border-radius:6px;">
+        Review &amp; Approve Now
+      </a>
+    </td></tr></table>
+    <p style="color:#999;font-size:12px;text-align:center;margin-top:16px;">
+      If you have questions, contact your administrator.
+    </p>
+  </td></tr>
+  <!-- Footer -->
+  <tr><td style="background:#f8f8f8;padding:16px 32px;text-align:center;border-top:1px solid #eee;">
+    <p style="margin:0;color:#999;font-size:11px;">Ram-Z Restaurant Group | Confidential</p>
+    <p style="margin:4px 0 0;color:#ccc;font-size:10px;">
+      This is an automated message. Please do not reply directly.
+    </p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>"""
+
+
+def send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails):
+    """
+    Send approval reminder emails to DMs with pending_dm submissions.
+    Only fires Monday and Tuesday at 8AM CT.
+    """
+    today   = date.today()
+    weekday = today.weekday()   # 0=Mon, 1=Tue
+    if weekday not in (0, 1):
+        return
+
+    current_hour = _current_ct_hour()
+    if current_hour != 8:
+        return
+
+    day_label    = "Monday" if weekday == 0 else "Tuesday"
+    pending_subs = load_pending_dm_submissions(target_week)
+    if not pending_subs:
+        print(f"\nDM Reminders ({day_label}): No pending_dm submissions — nothing to send.")
+        return
+
+    # Build store lookup
+    store_lookup = {r["location_id"]: r for r in ref_data}
+
+    # Group submissions by DM
+    by_dm = {}
+    for sub in pending_subs:
+        loc_id  = sub["location_id"]
+        store   = store_lookup.get(loc_id, {})
+        dm_name = store.get("dm", "")
+        if not dm_name:
+            continue
+        by_dm.setdefault(dm_name, []).append({
+            "store_name":    store.get("store_name", loc_id),
+            "current_band":  store.get("revenue_band", "N/A"),
+            "selected_band": sub.get("selected_band", "N/A"),
+            "location_id":   loc_id,
+            "token":         gm_contacts.get(loc_id, {}).get("token", ""),
+        })
+
+    print(f"\nDM Reminders ({day_label}): {len(by_dm)} DM(s) with pending approvals")
+
+    sent = failed = 0
+    for dm_name, stores in by_dm.items():
+        dm_email = dm_emails.get(dm_name, "")
+        if not dm_email:
+            print(f"  SKIP  {dm_name} \u2014 no email on file")
+            continue
+
+        # Use first pending store's token to build DM portal link
+        token         = next((s["token"] for s in stores if s["token"]), "")
+        dm_portal_url = f"{GM_PORTAL_URL}?token={token}&role=dm" if token else GM_PORTAL_URL
+
+        subject   = (f"Action Required: {len(stores)} Revenue Band Approval(s) Pending "
+                     f"\u2014 {week_label}")
+        html_body = build_dm_reminder_email(dm_name, stores, week_label, dm_portal_url)
+
+        try:
+            success = send_email(dm_email, subject, html_body)
+            status  = "\u2713 Sent  " if success else "\u2717 Failed"
+            print(f"  {status} {dm_name} \u2192 {dm_email} ({len(stores)} store(s))")
+            loc_id_for_log = stores[0]["location_id"]
+            log_email(target_week, loc_id_for_log, dm_email, subject,
+                      f"dm_reminder_{day_label.lower()}", success)
+            if success:
+                sent += 1
+            else:
+                failed += 1
+        except Exception as e:
+            print(f"  ERROR  {dm_name} \u2192 {dm_email} | {e}")
+            log_email(target_week, stores[0]["location_id"], dm_email, subject,
+                      f"dm_reminder_{day_label.lower()}", False, str(e))
+            failed += 1
+
+    print(f"DM Reminders done. {sent} sent | {failed} failed")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 def main():
     mode = get_email_mode()
@@ -505,80 +665,83 @@ def main():
     pending_stores = [r for r in ref_data if r["location_id"] not in submitted_ids]
 
     if not pending_stores:
-        print("\u2713 All stores have submitted. No emails needed.")
-        return
+        print("\u2713 All stores have submitted. No GM emails needed.")
+        # DM reminders may still be needed — fall through
+    else:
+        print(f"{len(pending_stores)} store(s) pending...\n")
 
-    print(f"{len(pending_stores)} store(s) pending...\n")
+        sent_count   = 0
+        failed_count = 0
+        skipped      = 0
 
-    sent_count   = 0
-    failed_count = 0
-    skipped      = 0
+        for store in pending_stores:
+            loc_id     = store["location_id"]
+            store_name = store["store_name"]
+            dm_name    = store.get("dm", "")
 
-    for store in pending_stores:
-        loc_id     = store["location_id"]
-        store_name = store["store_name"]
-        dm_name    = store.get("dm", "")
+            gm       = gm_contacts.get(loc_id, {})
+            gm_name  = gm.get("gm_name", "")
+            gm_email = gm.get("email", "")
+            token    = gm.get("token", "")
 
-        gm       = gm_contacts.get(loc_id, {})
-        gm_name  = gm.get("gm_name", "")
-        gm_email = gm.get("email", "")
-        token    = gm.get("token", "")
+            if not gm_email:
+                print(f"  SKIP  {store_name} ({loc_id}) \u2014 no GM email on file")
+                skipped += 1
+                continue
 
-        if not gm_email:
-            print(f"  SKIP  {store_name} ({loc_id}) \u2014 no GM email on file")
-            skipped += 1
-            continue
+            portal_url = f"{GM_PORTAL_URL}?token={token}" if token else GM_PORTAL_URL
+            subject    = build_subject(store_name, week_label, mode)
 
-        portal_url = f"{GM_PORTAL_URL}?token={token}" if token else GM_PORTAL_URL
-        subject    = build_subject(store_name, week_label, mode)
+            # Ensure a submission record exists in rev_band_submissions so the
+            # portal can look up the token and identify the store + week.
+            if token:
+                try:
+                    existing = sb.table("rev_band_submissions").select("id").eq(
+                        "token", token
+                    ).eq("week_start", str(target_week)).execute()
+                    if not existing.data:
+                        sb.table("rev_band_submissions").insert({
+                            "location_id": loc_id,
+                            "week_start":  str(target_week),
+                            "token":       token,
+                            "status":      "pending_gm",
+                        }).execute()
+                except Exception as e:
+                    print(f"  \u26a0 Could not create submission record for {store_name}: {e}")
 
-        # Ensure a submission record exists in rev_band_submissions so the
-        # portal can look up the token and identify the store + week.
-        if token:
+            perf       = load_store_performance(loc_id, target_week)
+            html_body  = build_email_html(store_name, gm_name, week_label, portal_url, mode, perf)
+
+            # Build CC list based on escalation day
+            cc_emails = []
+            if mode in ("tuesday", "wednesday"):
+                dm_email = dm_emails.get(dm_name, "")
+                if dm_email:
+                    cc_emails.append(dm_email)
+            if mode == "wednesday" and CEO_EMAIL:
+                cc_emails.append(CEO_EMAIL)
+
             try:
-                existing = sb.table("rev_band_submissions").select("id").eq(
-                    "token", token
-                ).eq("week_start", str(target_week)).execute()
-                if not existing.data:
-                    sb.table("rev_band_submissions").insert({
-                        "location_id": loc_id,
-                        "week_start":  str(target_week),
-                        "token":       token,
-                        "status":      "pending_gm",
-                    }).execute()
+                success = send_email(gm_email, subject, html_body, cc_emails)
+                cc_note = f" (cc: {', '.join(cc_emails)})" if cc_emails else ""
+                status  = "\u2713 Sent  " if success else "\u2717 Failed"
+                print(f"  {status} {store_name} \u2192 {gm_email}{cc_note}")
+                log_email(target_week, loc_id, gm_email, subject, f"gm_{mode}", success)
+                if success:
+                    sent_count += 1
+                else:
+                    failed_count += 1
             except Exception as e:
-                print(f"  ⚠ Could not create submission record for {store_name}: {e}")
-
-        perf       = load_store_performance(loc_id, target_week)
-        html_body  = build_email_html(store_name, gm_name, week_label, portal_url, mode, perf)
-
-        # Build CC list based on escalation day
-        cc_emails = []
-        if mode in ("tuesday", "wednesday"):
-            dm_email = dm_emails.get(dm_name, "")
-            if dm_email:
-                cc_emails.append(dm_email)
-        if mode == "wednesday" and CEO_EMAIL:
-            cc_emails.append(CEO_EMAIL)
-
-        try:
-            success = send_email(gm_email, subject, html_body, cc_emails)
-            cc_note = f" (cc: {', '.join(cc_emails)})" if cc_emails else ""
-            status  = "\u2713 Sent  " if success else "\u2717 Failed"
-            print(f"  {status} {store_name} \u2192 {gm_email}{cc_note}")
-            log_email(target_week, loc_id, gm_email, subject, f"gm_{mode}", success)
-            if success:
-                sent_count += 1
-            else:
+                print(f"  ERROR  {store_name} \u2192 {gm_email} | {e}")
+                log_email(target_week, loc_id, gm_email, subject, f"gm_{mode}", False, str(e))
                 failed_count += 1
-        except Exception as e:
-            print(f"  ERROR  {store_name} \u2192 {gm_email} | {e}")
-            log_email(target_week, loc_id, gm_email, subject, f"gm_{mode}", False, str(e))
-            failed_count += 1
 
-    print(f"\nDone. {sent_count} sent | {failed_count} failed | {skipped} skipped (no email on file).")
-    if failed_count > 0:
-        sys.exit(1)
+        print(f"\nDone. {sent_count} sent | {failed_count} failed | {skipped} skipped (no email on file).")
+        if failed_count > 0:
+            sys.exit(1)
+
+    # DM approval reminders — Mon/Tue 8AM CT, runs regardless of GM email status
+    send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
 
 
 if __name__ == "__main__":

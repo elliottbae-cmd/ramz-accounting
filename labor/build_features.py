@@ -6,11 +6,14 @@ import pandas as pd
 import numpy as np
 import toml
 import sys
+import pathlib
 import requests
 from datetime import timedelta
 
-sys.path.insert(0, 'C:/Users/BretElliott/ramz-accounting')
-secrets = toml.load('C:/Users/BretElliott/ramz-accounting/.streamlit/secrets.toml')
+_HERE = pathlib.Path(__file__).resolve().parent   # labor/
+_ROOT = _HERE.parent                               # ramz-accounting/
+sys.path.insert(0, str(_ROOT))
+secrets = toml.load(str(_ROOT / '.streamlit' / 'secrets.toml'))
 url = secrets['supabase']['url']
 key = secrets['supabase']['key']
 headers = {'apikey': key, 'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'}
@@ -31,20 +34,7 @@ def sb_get_all(table, extra=''):
     return rows
 
 
-# State mapping by store
-STATE_MAP = {
-    '112-0001': 'OK', '112-0002': 'OK', '112-0003': 'OK', '112-0004': 'OK',
-    '112-0005': 'OK', '112-0031': 'OK', '112-0035': 'OK', '112-0038': 'OK',
-    '112-0006': 'TX', '112-0007': 'TX', '112-0008': 'TX', '112-0009': 'TX',
-    '112-0010': 'TX', '112-0011': 'TX', '112-0032': 'TX', '112-0033': 'TX',
-    '112-0034': 'TX', '112-0036': 'TX', '112-0037': 'TX',
-    '112-0012': 'OH', '112-0013': 'OH', '112-0014': 'OH', '112-0015': 'OH',
-    '112-0016': 'OH', '112-0017': 'OH', '112-0018': 'OH', '112-0019': 'OH',
-    '112-0020': 'OH', '112-0021': 'OH', '112-0022': 'OH', '112-0023': 'OH',
-    '112-0024': 'OH', '112-0025': 'OH', '112-0026': 'OH', '112-0028': 'OH',
-    '112-0029': 'OH', '112-0030': 'OH',
-    '112-0027': 'KY',
-}
+from constants import STATE_MAP
 
 ANCHOR_PAYROLL = pd.Timestamp('2023-01-06')  # known payroll Friday
 
@@ -224,7 +214,7 @@ def main():
     print(f'  Date range: {df["sale_date"].min().date()} to {df["sale_date"].max().date()}')
     print(f'  Feature columns: {[c for c in df.columns if c not in ["location_id","sale_date","net_sales"]]}')
 
-    out = 'C:/Users/BretElliott/ramz-accounting/labor/feature_matrix.pkl'
+    out = str(_HERE / 'feature_matrix.pkl')
     df.to_pickle(out)
     print(f'\nSaved to {out}')
     return df

@@ -1697,8 +1697,8 @@ elif page == "Store Revenue Bands":
         for _r in (_votg_resp.data or []):
             if _r["location_id"] not in _votg_last:
                 _votg_last[_r["location_id"]] = _r
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] VOTG tooltip load failed: {e}")
 
     # Load sales data for tooltip — use weekly_actuals for recent weeks (more accurate than daily store_sales)
     _lw_start  = current_week - timedelta(weeks=1)   # last complete week start
@@ -1740,8 +1740,8 @@ elif page == "Store Revenue Bands":
                 "avg": _avg_val,
                 "py":  _py_val  if _py_val  and _py_val  > 0 else None,
             }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] Sales tooltip load failed: {e}")
 
     # --- Grid form ---
     with st.form("revenue_bands_grid"):

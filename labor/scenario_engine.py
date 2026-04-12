@@ -63,19 +63,7 @@ BANDS = [
     ('50k+',     50_000, 9_999_999),
 ]
 
-STATE_MAP = {
-    '112-0001': 'OK', '112-0002': 'OK', '112-0003': 'OK', '112-0004': 'OK',
-    '112-0005': 'OK', '112-0031': 'OK', '112-0035': 'OK', '112-0038': 'OK',
-    '112-0006': 'TX', '112-0007': 'TX', '112-0008': 'TX', '112-0009': 'TX',
-    '112-0010': 'TX', '112-0011': 'TX', '112-0032': 'TX', '112-0033': 'TX',
-    '112-0034': 'TX', '112-0036': 'TX', '112-0037': 'TX',
-    '112-0012': 'OH', '112-0013': 'OH', '112-0014': 'OH', '112-0015': 'OH',
-    '112-0016': 'OH', '112-0017': 'OH', '112-0018': 'OH', '112-0019': 'OH',
-    '112-0020': 'OH', '112-0021': 'OH', '112-0022': 'OH', '112-0023': 'OH',
-    '112-0024': 'OH', '112-0025': 'OH', '112-0026': 'OH', '112-0028': 'OH',
-    '112-0029': 'OH', '112-0030': 'OH',
-    '112-0027': 'KY',
-}
+from constants import STATE_MAP
 
 ANCHOR_PAYROLL = pd.Timestamp('2023-01-06')
 
@@ -201,9 +189,10 @@ class ScenarioEngine:
             sos_df['good_shift'] = pd.to_numeric(sos_df['good_shift'], errors='coerce')
         self.sos_df = sos_df
 
-        # VOTG history — all periods (periods can span months; no date filter here)
+        # VOTG history — last 52 weeks by period_end (filter pushed to DB)
         votg_raw = self._fetch(
             'store_votg',
+            date_col='period_end', date_gte=cutoff_52wk,
             select='location_id,period_start,period_end,guests_per_negative',
         )
         votg_df = pd.DataFrame(votg_raw) if votg_raw else pd.DataFrame(
@@ -213,9 +202,6 @@ class ScenarioEngine:
             votg_df['period_end']          = pd.to_datetime(votg_df['period_end'])
             votg_df['guests_per_negative'] = pd.to_numeric(
                 votg_df['guests_per_negative'], errors='coerce')
-            # Keep only periods relevant to the past 52 weeks
-            cutoff_ts = pd.Timestamp(cutoff_52wk)
-            votg_df = votg_df[votg_df['period_end'] >= cutoff_ts]
         self.votg_df = votg_df
 
         # Sales history — last 52 weeks (for trailing growth)
