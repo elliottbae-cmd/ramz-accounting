@@ -8,6 +8,7 @@ Run with:
 
 import os
 import sys
+import json
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from io import BytesIO, StringIO
@@ -127,6 +128,43 @@ def _cached_all_locks():
 @st.cache_data(ttl=60)
 def _cached_weekly_actuals():
     return load_weekly_actuals()
+
+@st.cache_data(ttl=300)
+def _cached_sos_data():
+    """Load all SoS weekly data."""
+    from supabase_db import get_supabase
+    sb = get_supabase()
+    try:
+        resp = sb.table("store_sos_weekly").select("*").order("week_start", desc=True).execute()
+        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def _cached_votg_data():
+    """Load all VOTG weekly data."""
+    from supabase_db import get_supabase
+    sb = get_supabase()
+    try:
+        resp = sb.table("store_votg_weekly").select("*").order("week_start", desc=True).execute()
+        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def _cached_tattle_reviews():
+    """Load all Tattle reviews with key fields for analysis."""
+    from supabase_db import get_supabase
+    sb = get_supabase()
+    try:
+        resp = sb.table("tattle_reviews").select(
+            "id,location_id,location_label,score,cer,"
+            "experienced_time,completed_time,day_part_label,channel_label,"
+            "comment,snapshots,sentiment_themes,sentiment_summary"
+        ).order("experienced_time", desc=True).limit(10000).execute()
+        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def _cached_store_sales():
@@ -577,6 +615,11 @@ ALL_PAGES = {
         "AVS Performance - DMs",
         "GM Hot Streak",
     ],
+    "guest_experience": [
+        "SoS/VOTG Trends",
+        "Tattle Insights",
+        "Sentiment Dashboard",
+    ],
     "settings": [
         "Manage Stores",
         "Store Revenue Bands",
@@ -644,6 +687,7 @@ if _LOGO_PATH.exists():
 
 render_nav_section("Accounting", "accounting", use_expander=True)
 render_nav_section("Labor", "labor", use_expander=True)
+render_nav_section("Guest Experience", "guest_experience", use_expander=True)
 render_nav_section("Settings", "settings", use_expander=True)
 if user_is_admin:
     render_nav_section("Admin", "admin", use_expander=True)
@@ -4058,3 +4102,512 @@ elif page == "Sales Scenario Analysis":
         use_container_width=True,
         hide_index=True,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: SoS/VOTG Trends
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "SoS/VOTG Trends":
+    st.title("SoS / VOTG Trends")
+    st.caption("Week-over-week and month-over-month rank tracking for Speed of Service and Voice of the Guest.")
+
+    ref_data = _cached_reference_data()
+    sos_df = _cached_sos_data()
+    votg_df = _cached_votg_data()
+
+    if sos_df.empty and votg_df.empty:
+        st.info("No SoS or VOTG data uploaded yet. Upload data via Admin > Upload SoS / Upload VOTG.")
+        st.stop()
+
+    # Build store-name lookup from reference data
+    store_lookup = dict(zip(ref_data["location_id"], ref_data["store_name"]))
+    dm_lookup = dict(zip(ref_data["location_id"], ref_data["dm"]))
+
+    # --- Filters ---
+    dm_list = sorted(ref_data["dm"].dropna().unique().tolist())
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        dm_filter = st.multiselect("Filter by DM", dm_list, key="sos_dm_filter")
+    with col_f2:
+        if dm_filter:
+            store_ids = ref_data[ref_data["dm"].isin(dm_filter)]["location_id"].tolist()
+        else:
+            store_ids = ref_data["location_id"].tolist()
+        store_options = [f"{sid} — {store_lookup.get(sid, sid)}" for sid in sorted(store_ids)]
+        store_filter = st.multiselect("Filter by Store", store_options, key="sos_store_filter")
+        if store_filter:
+            selected_ids = [s.split(" — ")[0] for s in store_filter]
+        else:
+            selected_ids = store_ids
+
+    period = st.radio("Period", ["All Weeks", "Last Month", "Last Quarter", "Last Year"],
+                      horizontal=True, key="sos_period")
+    cutoff = None
+    if period == "Last Month":
+        cutoff = str(date.today() - timedelta(days=30))
+    elif period == "Last Quarter":
+        cutoff = str(date.today() - timedelta(days=90))
+    elif period == "Last Year":
+        cutoff = str(date.today() - timedelta(days=365))
+
+    # --- SoS Trends ---
+    st.subheader("Speed of Service (SoS) — Rank Trends")
+    if not sos_df.empty:
+        sos = sos_df[sos_df["location_id"].isin(selected_ids)].copy()
+        if cutoff:
+            sos = sos[sos["week_start"] >= cutoff]
+        if sos.empty:
+            st.info("No SoS data for the selected filters.")
+        else:
+            sos["store"] = sos["location_id"].map(store_lookup)
+            sos["dm"] = sos["location_id"].map(dm_lookup)
+            sos["week_start"] = pd.to_datetime(sos["week_start"])
+            sos = sos.sort_values("week_start")
+
+            # Line chart — rank over time per store
+            import altair as alt
+            sos_chart = alt.Chart(sos).mark_line(point=True).encode(
+                x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
+                y=alt.Y("good_shift_rank:Q", title="Rank (lower = better)",
+                        scale=alt.Scale(reverse=True)),
+                color=alt.Color("store:N", title="Store"),
+                tooltip=["store", "week_start:T", "good_shift_rank", "good_shift", "total_stores"]
+            ).properties(height=400).interactive()
+            st.altair_chart(sos_chart, use_container_width=True)
+
+            # Month-over-month table
+            sos["month"] = sos["week_start"].dt.to_period("M").astype(str)
+            sos_monthly = sos.groupby(["store", "month"]).agg(
+                avg_rank=("good_shift_rank", "mean"),
+                avg_good_shift=("good_shift", "mean"),
+                weeks=("week_start", "count")
+            ).round(1).reset_index()
+
+            sos_pivot = sos_monthly.pivot_table(
+                index="store", columns="month", values="avg_rank"
+            ).round(1)
+            if not sos_pivot.empty:
+                st.markdown("**Month-over-Month Average Rank**")
+                st.dataframe(sos_pivot, use_container_width=True)
+    else:
+        st.info("No SoS data uploaded yet.")
+
+    st.divider()
+
+    # --- VOTG Trends ---
+    st.subheader("Voice of the Guest (VOTG) — Rank Trends")
+    if not votg_df.empty:
+        votg = votg_df[votg_df["location_id"].isin(selected_ids)].copy()
+        if cutoff:
+            votg = votg[votg["week_start"] >= cutoff]
+        if votg.empty:
+            st.info("No VOTG data for the selected filters.")
+        else:
+            votg["store"] = votg["location_id"].map(store_lookup)
+            votg["dm"] = votg["location_id"].map(dm_lookup)
+            votg["week_start"] = pd.to_datetime(votg["week_start"])
+            votg = votg.sort_values("week_start")
+
+            import altair as alt
+            votg_chart = alt.Chart(votg).mark_line(point=True).encode(
+                x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
+                y=alt.Y("votg_rank:Q", title="Rank (lower = better)",
+                        scale=alt.Scale(reverse=True)),
+                color=alt.Color("store:N", title="Store"),
+                tooltip=["store", "week_start:T", "votg_rank", "total_negative_reviews", "total_stores"]
+            ).properties(height=400).interactive()
+            st.altair_chart(votg_chart, use_container_width=True)
+
+            votg["month"] = votg["week_start"].dt.to_period("M").astype(str)
+            votg_monthly = votg.groupby(["store", "month"]).agg(
+                avg_rank=("votg_rank", "mean"),
+                avg_neg_reviews=("total_negative_reviews", "mean"),
+                weeks=("week_start", "count")
+            ).round(1).reset_index()
+
+            votg_pivot = votg_monthly.pivot_table(
+                index="store", columns="month", values="avg_rank"
+            ).round(1)
+            if not votg_pivot.empty:
+                st.markdown("**Month-over-Month Average Rank**")
+                st.dataframe(votg_pivot, use_container_width=True)
+    else:
+        st.info("No VOTG data uploaded yet.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Tattle Insights
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Tattle Insights":
+    st.title("Tattle Insights")
+    st.caption("Time-of-day patterns, category trends, and day-part analysis from guest feedback.")
+
+    ref_data = _cached_reference_data()
+    reviews_df = _cached_tattle_reviews()
+
+    if reviews_df.empty:
+        st.info("No Tattle review data available. Run the Tattle ingestion workflow first.")
+        st.stop()
+
+    # Build lookups
+    store_lookup = dict(zip(ref_data["location_id"], ref_data["store_name"]))
+    dm_lookup = dict(zip(ref_data["location_id"], ref_data["dm"]))
+
+    reviews_df["store"] = reviews_df["location_id"].map(store_lookup)
+    reviews_df["dm"] = reviews_df["location_id"].map(dm_lookup)
+
+    # Parse timestamps
+    reviews_df["experienced_time"] = pd.to_datetime(reviews_df["experienced_time"], errors="coerce")
+    reviews_df["hour"] = reviews_df["experienced_time"].dt.hour
+    reviews_df["day_of_week"] = reviews_df["experienced_time"].dt.day_name()
+    reviews_df["month"] = reviews_df["experienced_time"].dt.to_period("M").astype(str)
+    reviews_df["week"] = reviews_df["experienced_time"].dt.isocalendar().week.astype(int)
+
+    # Parse snapshots (category ratings)
+    def parse_snapshots(snap_str):
+        if pd.isna(snap_str) or not snap_str:
+            return {}
+        try:
+            snaps = json.loads(snap_str) if isinstance(snap_str, str) else snap_str
+            return {s.get("name", "Unknown"): s.get("rating") for s in snaps if s.get("rating") is not None}
+        except Exception:
+            return {}
+
+    reviews_df["categories"] = reviews_df["snapshots"].apply(parse_snapshots)
+
+    # --- Filters ---
+    dm_list = sorted(reviews_df["dm"].dropna().unique().tolist())
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        dm_filter = st.multiselect("Filter by DM", dm_list, key="tattle_dm")
+    with col_f2:
+        if dm_filter:
+            store_opts = sorted(reviews_df[reviews_df["dm"].isin(dm_filter)]["store"].dropna().unique().tolist())
+        else:
+            store_opts = sorted(reviews_df["store"].dropna().unique().tolist())
+        store_filter = st.multiselect("Filter by Store", store_opts, key="tattle_store")
+    with col_f3:
+        channel_opts = sorted(reviews_df["channel_label"].dropna().unique().tolist())
+        channel_filter = st.multiselect("Filter by Channel", channel_opts, key="tattle_channel")
+
+    filtered = reviews_df.copy()
+    if dm_filter:
+        filtered = filtered[filtered["dm"].isin(dm_filter)]
+    if store_filter:
+        filtered = filtered[filtered["store"].isin(store_filter)]
+    if channel_filter:
+        filtered = filtered[filtered["channel_label"].isin(channel_filter)]
+
+    if filtered.empty:
+        st.warning("No reviews match the selected filters.")
+        st.stop()
+
+    # --- Metrics ---
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("Total Reviews", f"{len(filtered):,}")
+    avg_score = filtered["score"].mean()
+    mc2.metric("Avg Score", f"{avg_score:.1f}" if pd.notna(avg_score) else "—")
+    with_comments = filtered["comment"].notna().sum()
+    mc3.metric("With Comments", f"{with_comments:,}")
+    unique_stores = filtered["location_id"].nunique()
+    mc4.metric("Stores", unique_stores)
+
+    st.divider()
+
+    # --- Time-of-Day Heatmap ---
+    st.subheader("🕐 Time-of-Day Heatmap — When Do Issues Happen?")
+    st.caption("Based on the guest's experienced time. Darker = more low-scoring reviews.")
+
+    # Focus on below-average reviews for the heatmap
+    low_reviews = filtered[filtered["score"] <= 3].copy()
+    if not low_reviews.empty and low_reviews["hour"].notna().any():
+        heatmap_data = low_reviews.groupby(
+            ["day_of_week", "hour"]
+        ).size().reset_index(name="count")
+
+        day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        heatmap_data["day_of_week"] = pd.Categorical(
+            heatmap_data["day_of_week"], categories=day_order, ordered=True
+        )
+
+        import altair as alt
+        heatmap = alt.Chart(heatmap_data).mark_rect().encode(
+            x=alt.X("hour:O", title="Hour of Day",
+                     axis=alt.Axis(labelExpr="datum.value + ':00'")),
+            y=alt.Y("day_of_week:N", title="Day",
+                     sort=day_order),
+            color=alt.Color("count:Q", title="Low-Score Reviews",
+                           scale=alt.Scale(scheme="reds")),
+            tooltip=["day_of_week", "hour", "count"]
+        ).properties(height=280).configure_view(strokeWidth=0)
+        st.altair_chart(heatmap, use_container_width=True)
+
+        # Top problem time slots
+        top_slots = heatmap_data.nlargest(5, "count")
+        if not top_slots.empty:
+            st.markdown("**Top 5 Problem Time Slots** (most low-score reviews):")
+            for _, slot in top_slots.iterrows():
+                h = int(slot["hour"])
+                ampm = f"{h % 12 or 12}{'am' if h < 12 else 'pm'}"
+                st.markdown(f"- **{slot['day_of_week']} at {ampm}** — {int(slot['count'])} low-score reviews")
+    else:
+        st.info("Not enough low-score reviews to build a heatmap.")
+
+    st.divider()
+
+    # --- Category Trends (Month-over-Month) ---
+    st.subheader("📊 Category Trends — Month over Month")
+    st.caption("Average rating by category across months. Track which areas are improving or declining.")
+
+    # Explode categories into rows
+    cat_rows = []
+    for _, row in filtered.iterrows():
+        cats = row["categories"]
+        if cats:
+            for cat_name, rating in cats.items():
+                cat_rows.append({
+                    "month": row["month"],
+                    "category": cat_name,
+                    "rating": float(rating),
+                    "store": row["store"],
+                })
+
+    if cat_rows:
+        cat_df = pd.DataFrame(cat_rows)
+        cat_monthly = cat_df.groupby(["month", "category"])["rating"].mean().round(2).reset_index()
+
+        import altair as alt
+        cat_chart = alt.Chart(cat_monthly).mark_line(point=True).encode(
+            x=alt.X("month:N", title="Month", sort=None),
+            y=alt.Y("rating:Q", title="Avg Rating", scale=alt.Scale(domain=[0, 5])),
+            color=alt.Color("category:N", title="Category"),
+            tooltip=["category", "month", "rating"]
+        ).properties(height=400).interactive()
+        st.altair_chart(cat_chart, use_container_width=True)
+
+        # Category comparison table
+        cat_pivot = cat_monthly.pivot_table(
+            index="category", columns="month", values="rating"
+        ).round(2)
+        if not cat_pivot.empty:
+            # Add trend arrow
+            cols = cat_pivot.columns.tolist()
+            if len(cols) >= 2:
+                cat_pivot["Trend"] = cat_pivot.apply(
+                    lambda r: "📈 Improving" if r[cols[-1]] > r[cols[-2]]
+                    else ("📉 Declining" if r[cols[-1]] < r[cols[-2]] else "➡️ Flat"),
+                    axis=1
+                )
+            st.dataframe(cat_pivot, use_container_width=True)
+    else:
+        st.info("No category-level data available in the reviews.")
+
+    st.divider()
+
+    # --- Day Part Analysis ---
+    st.subheader("🍽️ Day Part Analysis")
+    st.caption("Compare performance across meal periods and service channels.")
+
+    if filtered["day_part_label"].notna().any():
+        daypart_stats = filtered.groupby("day_part_label").agg(
+            count=("score", "size"),
+            avg_score=("score", "mean"),
+            low_pct=("score", lambda x: (x <= 3).mean()),
+        ).round(3).reset_index()
+        daypart_stats.columns = ["Day Part", "Reviews", "Avg Score", "% Low Score"]
+        daypart_stats["% Low Score"] = (daypart_stats["% Low Score"] * 100).round(1)
+        daypart_stats = daypart_stats.sort_values("Avg Score")
+
+        import altair as alt
+        dp_chart = alt.Chart(daypart_stats).mark_bar().encode(
+            x=alt.X("Avg Score:Q", scale=alt.Scale(domain=[0, 5])),
+            y=alt.Y("Day Part:N", sort="-x"),
+            color=alt.condition(
+                alt.datum["Avg Score"] >= 4,
+                alt.value("#C6EFCE"),
+                alt.value("#FFC7CE")
+            ),
+            tooltip=["Day Part", "Reviews", "Avg Score", "% Low Score"]
+        ).properties(height=250)
+        st.altair_chart(dp_chart, use_container_width=True)
+
+        st.dataframe(daypart_stats, use_container_width=True, hide_index=True)
+    else:
+        st.info("No day-part data available in the reviews.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Sentiment Dashboard
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Sentiment Dashboard":
+    st.title("Sentiment Dashboard")
+    st.caption("AI-powered analysis of guest review themes — powered by Claude sentiment scoring.")
+
+    ref_data = _cached_reference_data()
+    reviews_df = _cached_tattle_reviews()
+
+    if reviews_df.empty:
+        st.info("No Tattle review data available.")
+        st.stop()
+
+    # Build lookups
+    store_lookup = dict(zip(ref_data["location_id"], ref_data["store_name"]))
+    dm_lookup = dict(zip(ref_data["location_id"], ref_data["dm"]))
+    reviews_df["store"] = reviews_df["location_id"].map(store_lookup)
+    reviews_df["dm"] = reviews_df["location_id"].map(dm_lookup)
+    reviews_df["experienced_time"] = pd.to_datetime(reviews_df["experienced_time"], errors="coerce")
+    reviews_df["month"] = reviews_df["experienced_time"].dt.to_period("M").astype(str)
+
+    # Filter to reviews that have been scored
+    scored = reviews_df[reviews_df["sentiment_themes"].notna()].copy()
+    total_reviews = len(reviews_df[reviews_df["comment"].notna()])
+    scored_count = len(scored)
+
+    st.metric("Scored Reviews", f"{scored_count:,} / {total_reviews:,} with comments")
+    if scored_count == 0:
+        st.warning("No reviews have been sentiment-scored yet. Run the Tattle Sentiment Scoring workflow.")
+        st.stop()
+
+    # --- Filters ---
+    dm_list = sorted(scored["dm"].dropna().unique().tolist())
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        dm_filter = st.multiselect("Filter by DM", dm_list, key="sent_dm")
+    with col_f2:
+        if dm_filter:
+            store_opts = sorted(scored[scored["dm"].isin(dm_filter)]["store"].dropna().unique().tolist())
+        else:
+            store_opts = sorted(scored["store"].dropna().unique().tolist())
+        store_filter = st.multiselect("Filter by Store", store_opts, key="sent_store")
+
+    if dm_filter:
+        scored = scored[scored["dm"].isin(dm_filter)]
+    if store_filter:
+        scored = scored[scored["store"].isin(store_filter)]
+
+    # Parse sentiment themes
+    def parse_themes(themes_val):
+        if pd.isna(themes_val) or not themes_val:
+            return {}
+        try:
+            if isinstance(themes_val, str):
+                return json.loads(themes_val)
+            return themes_val
+        except Exception:
+            return {}
+
+    scored["parsed_themes"] = scored["sentiment_themes"].apply(parse_themes)
+
+    st.divider()
+
+    # --- Theme Frequency ---
+    st.subheader("🔍 Most Common Issues")
+    st.caption("Which themes come up most frequently in guest comments?")
+
+    theme_counts = {}
+    for themes in scored["parsed_themes"]:
+        for theme in themes.get("themes", []):
+            theme_counts[theme] = theme_counts.get(theme, 0) + 1
+
+    if theme_counts:
+        theme_df = pd.DataFrame([
+            {"Theme": k, "Count": v} for k, v in theme_counts.items()
+        ]).sort_values("Count", ascending=False)
+
+        import altair as alt
+        theme_chart = alt.Chart(theme_df.head(10)).mark_bar().encode(
+            x=alt.X("Count:Q", title="Mentions"),
+            y=alt.Y("Theme:N", sort="-x", title=""),
+            color=alt.value("#C49A5C"),
+            tooltip=["Theme", "Count"]
+        ).properties(height=300)
+        st.altair_chart(theme_chart, use_container_width=True)
+    else:
+        st.info("No themes parsed from scored reviews.")
+
+    st.divider()
+
+    # --- Theme Trends over Time ---
+    st.subheader("📈 Theme Trends — Month over Month")
+    st.caption("Are specific issues getting better or worse?")
+
+    theme_time_rows = []
+    for _, row in scored.iterrows():
+        themes = row["parsed_themes"]
+        for theme in themes.get("themes", []):
+            theme_time_rows.append({
+                "month": row["month"],
+                "theme": theme,
+            })
+
+    if theme_time_rows:
+        tt_df = pd.DataFrame(theme_time_rows)
+        # Get top 7 themes
+        top_themes = tt_df["theme"].value_counts().head(7).index.tolist()
+        tt_filtered = tt_df[tt_df["theme"].isin(top_themes)]
+        tt_monthly = tt_filtered.groupby(["month", "theme"]).size().reset_index(name="mentions")
+
+        import altair as alt
+        trend_chart = alt.Chart(tt_monthly).mark_line(point=True).encode(
+            x=alt.X("month:N", title="Month", sort=None),
+            y=alt.Y("mentions:Q", title="Mentions"),
+            color=alt.Color("theme:N", title="Theme"),
+            tooltip=["theme", "month", "mentions"]
+        ).properties(height=400).interactive()
+        st.altair_chart(trend_chart, use_container_width=True)
+    else:
+        st.info("Not enough data to show theme trends.")
+
+    st.divider()
+
+    # --- Worst Stores by Sentiment ---
+    st.subheader("⚠️ Stores with Most Negative Themes")
+
+    store_theme_counts = {}
+    for _, row in scored.iterrows():
+        themes = row["parsed_themes"]
+        sid = row["store"]
+        if sid and themes.get("themes"):
+            store_theme_counts[sid] = store_theme_counts.get(sid, 0) + len(themes["themes"])
+
+    if store_theme_counts:
+        worst_df = pd.DataFrame([
+            {"Store": k, "Total Issue Mentions": v} for k, v in store_theme_counts.items()
+        ]).sort_values("Total Issue Mentions", ascending=False).head(15)
+
+        import altair as alt
+        worst_chart = alt.Chart(worst_df).mark_bar().encode(
+            x=alt.X("Total Issue Mentions:Q"),
+            y=alt.Y("Store:N", sort="-x"),
+            color=alt.condition(
+                alt.datum["Total Issue Mentions"] > worst_df["Total Issue Mentions"].median(),
+                alt.value("#FFC7CE"),
+                alt.value("#C6EFCE")
+            ),
+            tooltip=["Store", "Total Issue Mentions"]
+        ).properties(height=400)
+        st.altair_chart(worst_chart, use_container_width=True)
+
+    st.divider()
+
+    # --- Overall Sentiment Score Distribution ---
+    st.subheader("📊 Overall Sentiment Score Distribution")
+
+    overall_scores = []
+    for themes in scored["parsed_themes"]:
+        ov = themes.get("overall")
+        if ov is not None:
+            overall_scores.append(float(ov))
+
+    if overall_scores:
+        score_df = pd.DataFrame({"score": overall_scores})
+        import altair as alt
+        hist = alt.Chart(score_df).mark_bar().encode(
+            x=alt.X("score:Q", bin=alt.Bin(step=0.5), title="Sentiment Score"),
+            y=alt.Y("count():Q", title="Reviews"),
+            color=alt.value("#2B3A4E"),
+        ).properties(height=250)
+        st.altair_chart(hist, use_container_width=True)
+
+        avg_sent = sum(overall_scores) / len(overall_scores)
+        st.metric("Average Sentiment Score", f"{avg_sent:.2f} / 5.0")
