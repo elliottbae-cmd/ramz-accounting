@@ -4683,3 +4683,48 @@ elif page == "Sentiment Dashboard":
         sc1.metric("Average Score", f"{avg_score:.2f}")
         sc2.metric("Negative Reviews", f"{neg_pct:.1f}%")
         sc3.metric("Total Scored", f"{len(valid_scores):,}")
+
+        # --- Monthly trend: Avg Score & Negative % over time ---
+        st.markdown("**Historical Trend — Average Score & Negative %**")
+        st.caption("Track how guest satisfaction is moving month over month. Score going up + negative % going down = improving.")
+
+        valid_scores["month"] = valid_scores["experienced_time"].dt.to_period("M").astype(str)
+        monthly_stats = valid_scores.groupby("month").agg(
+            avg_score=("score_num", "mean"),
+            neg_pct=("score_num", lambda x: (x < 70).mean() * 100),
+            reviews=("score_num", "count"),
+        ).reset_index()
+        monthly_stats["avg_score"] = monthly_stats["avg_score"].round(1)
+        monthly_stats["neg_pct"] = monthly_stats["neg_pct"].round(1)
+
+        if len(monthly_stats) >= 2:
+            # Dual-axis chart: avg score (line) + negative % (bars)
+            score_line = alt.Chart(monthly_stats).mark_line(
+                point=True, strokeWidth=3, color="#2B3A4E"
+            ).encode(
+                x=alt.X("month:N", title="Month", sort=None),
+                y=alt.Y("avg_score:Q", title="Avg Score",
+                         scale=alt.Scale(domain=[
+                             max(0, monthly_stats["avg_score"].min() - 10),
+                             100
+                         ])),
+                tooltip=[alt.Tooltip("month:N", title="Month"),
+                         alt.Tooltip("avg_score:Q", title="Avg Score", format=".1f"),
+                         alt.Tooltip("reviews:Q", title="Reviews")]
+            )
+
+            neg_bars = alt.Chart(monthly_stats).mark_bar(opacity=0.4, color="#FFC7CE").encode(
+                x=alt.X("month:N", sort=None),
+                y=alt.Y("neg_pct:Q", title="Negative %",
+                         scale=alt.Scale(domain=[0, max(50, monthly_stats["neg_pct"].max() + 5)])),
+                tooltip=[alt.Tooltip("month:N", title="Month"),
+                         alt.Tooltip("neg_pct:Q", title="Negative %", format=".1f")]
+            )
+
+            combined = alt.layer(neg_bars, score_line).resolve_scale(
+                y="independent"
+            ).properties(height=300)
+            st.altair_chart(combined, use_container_width=True)
+            st.caption("**Dark line** = Average Score (left axis) · **Red bars** = Negative % (right axis)")
+        else:
+            st.info("Need at least 2 months of data to show trend.")
