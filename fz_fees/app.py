@@ -4826,6 +4826,6 @@ elif page == "Sentiment Dashboard":
                 y="independent"
             ).properties(height=300)
             st.altair_chart(combined, use_container_width=True)
-            st.caption("**Dark line** = Average Score (left axis) · **Red bars** = Negative % (right axis)")
+            st.caption("**Red bars** = Negative % (left axis) · **Dark line** = Average Score (right axis)")
         else:
             st.info("Need at least 2 months of data to show trend.")
