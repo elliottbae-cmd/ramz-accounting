@@ -4658,15 +4658,22 @@ elif page == "Sentiment Dashboard":
 
     if not valid_scores.empty:
         import altair as alt
-        hist = alt.Chart(valid_scores).mark_bar().encode(
-            x=alt.X("score_num:Q", bin=alt.Bin(step=5), title="Guest Score (0–100)",
-                     scale=alt.Scale(domain=[0, 100])),
-            y=alt.Y("count():Q", title="Reviews"),
-            color=alt.condition(
-                alt.datum.score_num >= 70,
-                alt.value("#C6EFCE"),
-                alt.value("#FFC7CE")
-            ),
+        # Pre-bin and assign color category so Altair colors correctly
+        valid_scores["score_bin"] = (valid_scores["score_num"] // 5 * 5).astype(int)
+        valid_scores["rating"] = valid_scores["score_num"].apply(
+            lambda x: "Positive (70+)" if x >= 70 else "Negative (<70)"
+        )
+        binned = valid_scores.groupby(["score_bin", "rating"]).size().reset_index(name="count")
+
+        hist = alt.Chart(binned).mark_bar().encode(
+            x=alt.X("score_bin:O", title="Guest Score (0–100)",
+                     axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("count:Q", title="Reviews"),
+            color=alt.Color("rating:N", scale=alt.Scale(
+                domain=["Positive (70+)", "Negative (<70)"],
+                range=["#C6EFCE", "#FFC7CE"]
+            ), title=""),
+            tooltip=["score_bin", "count", "rating"]
         ).properties(height=250)
         st.altair_chart(hist, use_container_width=True)
 
