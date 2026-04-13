@@ -11,8 +11,11 @@ from datetime import timedelta
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error
 
 # Load feature matrix
+import pathlib
+_HERE = pathlib.Path(__file__).resolve().parent
+
 print('Loading feature matrix...')
-df = pd.read_pickle('C:/Users/BretElliott/ramz-accounting/labor/feature_matrix.pkl')
+df = pd.read_pickle(str(_HERE / 'feature_matrix.pkl'))
 print(f'  {len(df):,} rows, {df["location_id"].nunique()} stores')
 
 # Encode categoricals
@@ -134,7 +137,7 @@ for _, row in fi.iterrows():
     print(f'  {row["feature"]:<35} {row["importance"]:>10,.0f}')
 
 # Save model
-model_path = 'C:/Users/BretElliott/ramz-accounting/labor/lgbm_model_v1.pkl'
+model_path = str(_HERE / 'lgbm_model_v1.pkl')
 with open(model_path, 'wb') as f:
     pickle.dump(model, f)
 
@@ -151,7 +154,7 @@ meta = {
     'val_rows': len(val_df),
     'stores': df['location_id'].nunique(),
 }
-with open('C:/Users/BretElliott/ramz-accounting/labor/model_meta_v1.json', 'w') as f:
+with open(str(_HERE / 'model_meta_v1.json'), 'w') as f:
     json.dump(meta, f, indent=2)
 
 print(f'\nModel saved to {model_path}')

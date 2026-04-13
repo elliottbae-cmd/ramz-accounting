@@ -119,10 +119,14 @@ def main():
         sb.table("admin_users").upsert(records).execute()
         print(f"  admin_users: done")
     else:
-        # Default admin
-        print("  admin_users: inserting default admin...")
-        sb.table("admin_users").upsert([{"email": "elliottbae@gmail.com"}]).execute()
-        print("  admin_users: done")
+        # Default admin — uses ADMIN_EMAIL env var, falls back to empty (no default admin)
+        default_admin = os.environ.get("ADMIN_EMAIL", "")
+        if default_admin:
+            print(f"  admin_users: inserting default admin from ADMIN_EMAIL env var...")
+            sb.table("admin_users").upsert([{"email": default_admin}]).execute()
+            print("  admin_users: done")
+        else:
+            print("  admin_users: skipped (no ADMIN_EMAIL env var set)")
 
     # 6. Weekly locks (if any exist)
     if WEEKLY_LOCK_CSV.exists():

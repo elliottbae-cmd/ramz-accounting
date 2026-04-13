@@ -34,6 +34,7 @@ ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL  = "claude-haiku-4-5-20251001"   # fast + cheap for bulk scoring
 BATCH_SIZE    = 500                            # rows fetched from Supabase at once
 REQUEST_DELAY = 13                             # seconds between Claude calls (5 req/min rate limit)
+MAX_RUNTIME   = 5 * 60 * 60                    # 5 hours max (GitHub Actions limit is 6h)
 
 if not all([SUPABASE_URL, SUPABASE_KEY, ANTHROPIC_KEY]):
     print("ERROR: Missing required env vars.")
@@ -285,12 +286,15 @@ def score_review(row):
 def score_all(fetch_fn, label=""):
     """
     Generic scoring loop — fetches batches using fetch_fn, scores each row,
-    writes results back to Supabase.
+    writes results back to Supabase. Exits gracefully before GitHub Actions
+    6-hour timeout.
     """
     total_scored  = 0
     total_skipped = 0
     total_failed  = 0
     offset        = 0
+    start_time    = time.time()
+    hit_time_limit = False
 
     while True:
         batch = fetch_fn(limit=BATCH_SIZE, offset=offset)
@@ -301,6 +305,14 @@ def score_all(fetch_fn, label=""):
               f"(offset {offset})...")
 
         for row in batch:
+            # Check time limit before each API call
+            elapsed = time.time() - start_time
+            if elapsed >= MAX_RUNTIME:
+                print(f"\n⏱ Reached {MAX_RUNTIME//3600}h runtime limit. "
+                      f"Stopping gracefully — run again to continue.")
+                hit_time_limit = True
+                break
+
             themes, summary = score_review(row)
             time.sleep(REQUEST_DELAY)
 
@@ -314,14 +326,19 @@ def score_all(fetch_fn, label=""):
             if total_scored % 100 == 0:
                 print(f"    {total_scored} reviews scored so far...")
 
+        if hit_time_limit:
+            break
         if len(batch) < BATCH_SIZE:
             break
         offset += BATCH_SIZE
 
-    print(f"\n✓ Done{' — ' + label if label else ''}.")
+    elapsed_min = (time.time() - start_time) / 60
+    print(f"\n✓ Done{' — ' + label if label else ''} ({elapsed_min:.0f} min).")
     print(f"  Scored  : {total_scored}")
     print(f"  Failed  : {total_failed}")
     print(f"  Skipped : {total_skipped}")
+    if hit_time_limit:
+        print(f"\n⚠ Time limit reached. Run the workflow again to score remaining reviews.")
 
 
 # ---------------------------------------------------------------------------

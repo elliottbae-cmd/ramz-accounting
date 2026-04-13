@@ -7,7 +7,6 @@ import numpy as np
 import toml
 import sys
 import pathlib
-import requests
 from datetime import timedelta
 
 _HERE = pathlib.Path(__file__).resolve().parent   # labor/

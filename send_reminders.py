@@ -97,9 +97,16 @@ def _current_ct_hour():
     try:
         from zoneinfo import ZoneInfo
         return datetime.now(ZoneInfo("America/Chicago")).hour
-    except Exception:
-        # Fallback: approximate CDT (UTC-5). Accurate Apr–Nov.
-        return (datetime.now(timezone.utc).hour - 5) % 24
+    except ImportError:
+        # Python < 3.9 fallback — use dateutil
+        try:
+            from dateutil import tz
+            return datetime.now(tz.gettz("America/Chicago")).hour
+        except ImportError:
+            # Last resort: approximate CST (UTC-6). NOTE: off by 1hr during CDT.
+            import logging
+            logging.warning("No timezone library available — using UTC-6 approximation")
+            return (datetime.now(timezone.utc).hour - 6) % 24
 
 
 def _parse_hour(time_str, default):

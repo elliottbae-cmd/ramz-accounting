@@ -63,22 +63,9 @@ BANDS = [
     ('50k+',     50_000, 9_999_999),
 ]
 
-from constants import STATE_MAP
+from constants import STATE_MAP, HOLIDAY_CALENDAR
 
 ANCHOR_PAYROLL = pd.Timestamp('2023-01-06')
-
-HOLIDAY_CALENDAR = {
-    date(2024, 11, 28): 'thanksgiving',         date(2025, 11, 27): 'thanksgiving',
-    date(2026, 11, 26): 'thanksgiving',
-    date(2023, 12, 25): 'christmas',             date(2024, 12, 25): 'christmas',
-    date(2025, 12, 25): 'christmas',             date(2026, 12, 25): 'christmas',
-    date(2023, 12, 24): 'christmas_eve',         date(2024, 12, 24): 'christmas_eve',
-    date(2025, 12, 24): 'christmas_eve',         date(2026, 12, 24): 'christmas_eve',
-    date(2023, 11, 22): 'day_before_thanksgiving',
-    date(2024, 11, 27): 'day_before_thanksgiving',
-    date(2025, 11, 26): 'day_before_thanksgiving',
-    date(2026, 11, 25): 'day_before_thanksgiving',
-}
 
 SCENARIOS   = ('conservative', 'base', 'optimistic')
 N_WEEKS     = 26      # 6-month horizon
