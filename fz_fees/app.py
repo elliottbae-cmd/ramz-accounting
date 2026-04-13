@@ -4164,6 +4164,11 @@ elif page == "SoS/VOTG Trends":
             sos["week_start"] = pd.to_datetime(sos["week_start"])
             sos = sos.sort_values("week_start")
 
+            # Convert numeric columns from strings
+            for col in ["good_shift_rank", "good_shift", "total_stores", "red_ticket", "shift_streak"]:
+                if col in sos.columns:
+                    sos[col] = pd.to_numeric(sos[col], errors="coerce")
+
             # Line chart — rank over time per store
             import altair as alt
             sos_chart = alt.Chart(sos).mark_line(point=True).encode(
@@ -4207,6 +4212,11 @@ elif page == "SoS/VOTG Trends":
             votg["dm"] = votg["location_id"].map(dm_lookup)
             votg["week_start"] = pd.to_datetime(votg["week_start"])
             votg = votg.sort_values("week_start")
+
+            # Convert numeric columns from strings
+            for col in ["votg_rank", "total_stores", "total_negative_reviews", "total_reviews", "guests_per_negative"]:
+                if col in votg.columns:
+                    votg[col] = pd.to_numeric(votg[col], errors="coerce")
 
             import altair as alt
             votg_chart = alt.Chart(votg).mark_line(point=True).encode(
