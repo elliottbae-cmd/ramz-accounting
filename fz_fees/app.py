@@ -4269,7 +4269,14 @@ elif page == "Tattle Insights":
             return {}
         try:
             snaps = json.loads(snap_str) if isinstance(snap_str, str) else snap_str
-            return {s.get("name", "Unknown"): s.get("rating") for s in snaps if s.get("rating") is not None}
+            result = {}
+            for s in snaps:
+                # Tattle stores as "category", fall back to "name" or "label"
+                cat = s.get("category") or s.get("name") or s.get("label") or "Unknown"
+                rating = s.get("rating")
+                if rating is not None:
+                    result[cat] = rating
+            return result
         except Exception:
             return {}
 
