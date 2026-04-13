@@ -4555,12 +4555,12 @@ elif page == "Sentiment Dashboard":
 
     st.divider()
 
-    # --- Theme Trends over Time ---
-    st.subheader("📈 Theme Trends — Month over Month")
-    st.caption("Are specific issues getting better or worse?")
+    # --- Theme Trends over Time (Negative Only) ---
+    st.subheader("📉 Negative Review Theme Trends — Month over Month")
+    st.caption("Tracking negative review themes over time. A downward trend = improving.")
 
     theme_time_rows = []
-    for _, row in scored.iterrows():
+    for _, row in neg_scored.iterrows():
         themes = row["parsed_themes"]
         for theme in themes.get("themes", []):
             theme_time_rows.append({
