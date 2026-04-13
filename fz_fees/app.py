@@ -4169,31 +4169,64 @@ elif page == "SoS/VOTG Trends":
                 if col in sos.columns:
                     sos[col] = pd.to_numeric(sos[col], errors="coerce")
 
-            # Line chart — rank over time per store
             import altair as alt
-            sos_chart = alt.Chart(sos).mark_line(point=True).encode(
-                x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
-                y=alt.Y("good_shift_rank:Q", title="Rank (lower = better)",
-                        scale=alt.Scale(reverse=True)),
-                color=alt.Color("store:N", title="Store"),
-                tooltip=["store", "week_start:T", "good_shift_rank", "good_shift", "total_stores"]
-            ).properties(height=400).interactive()
-            st.altair_chart(sos_chart, use_container_width=True)
 
-            # Month-over-month table
-            sos["month"] = sos["week_start"].dt.to_period("M").astype(str)
-            sos_monthly = sos.groupby(["store", "month"]).agg(
+            # Portfolio average rank by week
+            portfolio_avg = sos.groupby("week_start").agg(
                 avg_rank=("good_shift_rank", "mean"),
-                avg_good_shift=("good_shift", "mean"),
-                weeks=("week_start", "count")
-            ).round(1).reset_index()
+                stores=("location_id", "nunique"),
+            ).reset_index()
+            portfolio_avg["avg_rank"] = portfolio_avg["avg_rank"].round(1)
 
-            sos_pivot = sos_monthly.pivot_table(
-                index="store", columns="month", values="avg_rank"
-            ).round(1)
-            if not sos_pivot.empty:
-                st.markdown("**Month-over-Month Average Rank**")
-                st.dataframe(sos_pivot, use_container_width=True)
+            avg_chart = alt.Chart(portfolio_avg).mark_line(
+                point=True, strokeWidth=3, color="#2B3A4E"
+            ).encode(
+                x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
+                y=alt.Y("avg_rank:Q", title="Avg Rank (lower = better)",
+                        scale=alt.Scale(reverse=True, zero=False)),
+                tooltip=[alt.Tooltip("week_start:T", title="Week"),
+                         alt.Tooltip("avg_rank:Q", title="Avg Rank", format=".1f"),
+                         alt.Tooltip("stores:Q", title="Stores")]
+            ).properties(height=350).interactive()
+            st.altair_chart(avg_chart, use_container_width=True)
+            st.caption("Portfolio average SoS rank across all filtered stores. Lower = better.")
+
+            # Identify stores on a negative trend (rank getting worse)
+            st.markdown("**⚠️ Stores Trending Negative** (rank getting worse over recent weeks)")
+
+            weeks = sorted(sos["week_start"].unique())
+            if len(weeks) >= 2:
+                # Compare each store's most recent rank to their earliest rank
+                store_trends = []
+                for store_name in sos["store"].unique():
+                    store_data = sos[sos["store"] == store_name].sort_values("week_start")
+                    if len(store_data) >= 2:
+                        first_rank = store_data["good_shift_rank"].iloc[0]
+                        last_rank = store_data["good_shift_rank"].iloc[-1]
+                        dm = store_data["dm"].iloc[0]
+                        if pd.notna(first_rank) and pd.notna(last_rank):
+                            change = last_rank - first_rank
+                            store_trends.append({
+                                "Store": store_name,
+                                "DM": dm,
+                                "First Rank": int(first_rank),
+                                "Latest Rank": int(last_rank),
+                                "Change": int(change),
+                                "Direction": "📉 Declining" if change > 0 else ("📈 Improving" if change < 0 else "➡️ Flat"),
+                            })
+
+                if store_trends:
+                    trend_df = pd.DataFrame(store_trends).sort_values("Change", ascending=False)
+                    declining = trend_df[trend_df["Change"] > 0]
+                    if not declining.empty:
+                        st.dataframe(declining, use_container_width=True, hide_index=True)
+                    else:
+                        st.success("No stores are trending negative — all ranks are holding or improving.")
+
+                    with st.expander("View all stores"):
+                        st.dataframe(trend_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("Need at least 2 weeks of data to calculate trends.")
     else:
         st.info("No SoS data uploaded yet.")
 
@@ -4219,28 +4252,65 @@ elif page == "SoS/VOTG Trends":
                     votg[col] = pd.to_numeric(votg[col], errors="coerce")
 
             import altair as alt
-            votg_chart = alt.Chart(votg).mark_line(point=True).encode(
-                x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
-                y=alt.Y("votg_rank:Q", title="Rank (lower = better)",
-                        scale=alt.Scale(reverse=True)),
-                color=alt.Color("store:N", title="Store"),
-                tooltip=["store", "week_start:T", "votg_rank", "total_negative_reviews", "total_stores"]
-            ).properties(height=400).interactive()
-            st.altair_chart(votg_chart, use_container_width=True)
 
-            votg["month"] = votg["week_start"].dt.to_period("M").astype(str)
-            votg_monthly = votg.groupby(["store", "month"]).agg(
+            # Portfolio average rank by week
+            votg_portfolio = votg.groupby("week_start").agg(
                 avg_rank=("votg_rank", "mean"),
-                avg_neg_reviews=("total_negative_reviews", "mean"),
-                weeks=("week_start", "count")
-            ).round(1).reset_index()
+                avg_neg=("total_negative_reviews", "mean"),
+                stores=("location_id", "nunique"),
+            ).reset_index()
+            votg_portfolio["avg_rank"] = votg_portfolio["avg_rank"].round(1)
+            votg_portfolio["avg_neg"] = votg_portfolio["avg_neg"].round(1)
 
-            votg_pivot = votg_monthly.pivot_table(
-                index="store", columns="month", values="avg_rank"
-            ).round(1)
-            if not votg_pivot.empty:
-                st.markdown("**Month-over-Month Average Rank**")
-                st.dataframe(votg_pivot, use_container_width=True)
+            votg_avg_chart = alt.Chart(votg_portfolio).mark_line(
+                point=True, strokeWidth=3, color="#2B3A4E"
+            ).encode(
+                x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
+                y=alt.Y("avg_rank:Q", title="Avg Rank (lower = better)",
+                        scale=alt.Scale(reverse=True, zero=False)),
+                tooltip=[alt.Tooltip("week_start:T", title="Week"),
+                         alt.Tooltip("avg_rank:Q", title="Avg Rank", format=".1f"),
+                         alt.Tooltip("avg_neg:Q", title="Avg Neg Reviews", format=".1f"),
+                         alt.Tooltip("stores:Q", title="Stores")]
+            ).properties(height=350).interactive()
+            st.altair_chart(votg_avg_chart, use_container_width=True)
+            st.caption("Portfolio average VOTG rank across all filtered stores. Lower = better.")
+
+            # Identify stores on a negative trend
+            st.markdown("**⚠️ Stores Trending Negative** (rank getting worse over recent weeks)")
+
+            votg_weeks = sorted(votg["week_start"].unique())
+            if len(votg_weeks) >= 2:
+                votg_trends = []
+                for store_name in votg["store"].unique():
+                    store_data = votg[votg["store"] == store_name].sort_values("week_start")
+                    if len(store_data) >= 2:
+                        first_rank = store_data["votg_rank"].iloc[0]
+                        last_rank = store_data["votg_rank"].iloc[-1]
+                        dm = store_data["dm"].iloc[0]
+                        if pd.notna(first_rank) and pd.notna(last_rank):
+                            change = last_rank - first_rank
+                            votg_trends.append({
+                                "Store": store_name,
+                                "DM": dm,
+                                "First Rank": int(first_rank),
+                                "Latest Rank": int(last_rank),
+                                "Change": int(change),
+                                "Direction": "📉 Declining" if change > 0 else ("📈 Improving" if change < 0 else "➡️ Flat"),
+                            })
+
+                if votg_trends:
+                    votg_trend_df = pd.DataFrame(votg_trends).sort_values("Change", ascending=False)
+                    votg_declining = votg_trend_df[votg_trend_df["Change"] > 0]
+                    if not votg_declining.empty:
+                        st.dataframe(votg_declining, use_container_width=True, hide_index=True)
+                    else:
+                        st.success("No stores are trending negative — all VOTG ranks are holding or improving.")
+
+                    with st.expander("View all stores"):
+                        st.dataframe(votg_trend_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("Need at least 2 weeks of data to calculate trends.")
     else:
         st.info("No VOTG data uploaded yet.")
 
