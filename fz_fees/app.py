@@ -4432,6 +4432,61 @@ elif page == "Tattle Insights":
 
     st.divider()
 
+    # --- Negative Review Count by Category (Month-over-Month) ---
+    st.subheader("📉 Negative Reviews by Category — Month over Month")
+    st.caption("Count of reviews scoring below 70 per category. Fewer = improving. A downward trend is good.")
+
+    neg_cat_rows = []
+    for _, row in filtered.iterrows():
+        score_val = pd.to_numeric(row.get("score"), errors="coerce")
+        if pd.notna(score_val) and score_val < 70:
+            cats = row["categories"]
+            if cats:
+                for cat_name in cats.keys():
+                    neg_cat_rows.append({
+                        "month": row["month"],
+                        "category": cat_name,
+                    })
+
+    if neg_cat_rows:
+        neg_cat_df = pd.DataFrame(neg_cat_rows)
+        neg_cat_monthly = neg_cat_df.groupby(["month", "category"]).size().reset_index(name="neg_count")
+
+        import altair as alt
+        neg_cat_chart = alt.Chart(neg_cat_monthly).mark_line(point=True).encode(
+            x=alt.X("month:N", title="Month", sort=None),
+            y=alt.Y("neg_count:Q", title="Negative Reviews"),
+            color=alt.Color("category:N", title="Category"),
+            tooltip=["category", "month", "neg_count"]
+        ).properties(height=400).interactive()
+        st.altair_chart(neg_cat_chart, use_container_width=True)
+
+        # Table with trend
+        neg_cat_pivot = neg_cat_monthly.pivot_table(
+            index="category", columns="month", values="neg_count", fill_value=0
+        ).astype(int)
+        if not neg_cat_pivot.empty:
+            cols = neg_cat_pivot.columns.tolist()
+            if len(cols) >= 2:
+                neg_cat_pivot["Trend"] = neg_cat_pivot.apply(
+                    lambda r: "📈 Improving" if r[cols[-1]] < r[cols[-2]]
+                    else ("📉 Getting Worse" if r[cols[-1]] > r[cols[-2]] else "➡️ Flat"),
+                    axis=1
+                )
+            styled_neg = neg_cat_pivot.reset_index().rename(columns={"category": "Category"})
+            st.dataframe(
+                styled_neg,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Category": st.column_config.TextColumn("Category", width="large"),
+                },
+            )
+    else:
+        st.info("No negative reviews with category data for the selected filters.")
+
+    st.divider()
+
     # --- Day Part Analysis ---
     st.subheader("🍽️ Day Part Analysis")
     st.caption("Compare performance across meal periods and service channels.")
