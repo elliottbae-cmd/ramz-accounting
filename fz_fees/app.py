@@ -4319,7 +4319,7 @@ elif page == "Tattle Insights":
     st.caption("Based on the guest's experienced time. Darker = more low-scoring reviews.")
 
     # Focus on below-average reviews for the heatmap
-    low_reviews = filtered[filtered["score"] <= 3].copy()
+    low_reviews = filtered[pd.to_numeric(filtered["score"], errors="coerce") < 70].copy()
     if not low_reviews.empty and low_reviews["hour"].notna().any():
         heatmap_data = low_reviews.groupby(
             ["day_of_week", "hour"]
@@ -4412,7 +4412,7 @@ elif page == "Tattle Insights":
         daypart_stats = filtered.groupby("day_part_label").agg(
             count=("score", "size"),
             avg_score=("score", "mean"),
-            low_pct=("score", lambda x: (x <= 3).mean()),
+            low_pct=("score", lambda x: (pd.to_numeric(x, errors="coerce") < 70).mean()),
         ).round(3).reset_index()
         daypart_stats.columns = ["Day Part", "Reviews", "Avg Score", "% Low Score"]
         daypart_stats["% Low Score"] = (daypart_stats["% Low Score"] * 100).round(1)
@@ -4504,9 +4504,10 @@ elif page == "Sentiment Dashboard":
     st.subheader("🔍 Most Common Themes — Negative vs Positive")
     st.caption("Side-by-side comparison of what guests complain about vs. what they praise.")
 
-    # Split scored reviews into negative (score <= 3) and positive (score > 3)
-    neg_scored = scored[scored["score"].apply(lambda x: float(x) <= 3 if pd.notna(x) else False)]
-    pos_scored = scored[scored["score"].apply(lambda x: float(x) > 3 if pd.notna(x) else False)]
+    # Split scored reviews into negative (score < 70) and positive (score >= 70)
+    scored["_score_num"] = pd.to_numeric(scored["score"], errors="coerce")
+    neg_scored = scored[scored["_score_num"] < 70]
+    pos_scored = scored[scored["_score_num"] >= 70]
 
     def count_themes(df):
         counts = {}
@@ -4649,6 +4650,7 @@ elif page == "Sentiment Dashboard":
 
     # --- Overall Score Distribution ---
     st.subheader("📊 Guest Score Distribution")
+    st.caption("How guest scores are spread across the 0–100 scale. Green bars are scores 70+, red bars are below 70 (negative).")
 
     valid_scores = scored[scored["score"].notna()].copy()
     valid_scores["score_num"] = pd.to_numeric(valid_scores["score"], errors="coerce")
@@ -4657,10 +4659,11 @@ elif page == "Sentiment Dashboard":
     if not valid_scores.empty:
         import altair as alt
         hist = alt.Chart(valid_scores).mark_bar().encode(
-            x=alt.X("score_num:Q", bin=alt.Bin(step=0.5), title="Guest Score"),
+            x=alt.X("score_num:Q", bin=alt.Bin(step=5), title="Guest Score (0–100)",
+                     scale=alt.Scale(domain=[0, 100])),
             y=alt.Y("count():Q", title="Reviews"),
             color=alt.condition(
-                alt.datum.score_num >= 4,
+                alt.datum.score_num >= 70,
                 alt.value("#C6EFCE"),
                 alt.value("#FFC7CE")
             ),
@@ -4668,7 +4671,7 @@ elif page == "Sentiment Dashboard":
         st.altair_chart(hist, use_container_width=True)
 
         avg_score = valid_scores["score_num"].mean()
-        neg_pct = (valid_scores["score_num"] <= 3).mean() * 100
+        neg_pct = (valid_scores["score_num"] < 70).mean() * 100
         sc1, sc2, sc3 = st.columns(3)
         sc1.metric("Average Score", f"{avg_score:.2f}")
         sc2.metric("Negative Reviews", f"{neg_pct:.1f}%")
