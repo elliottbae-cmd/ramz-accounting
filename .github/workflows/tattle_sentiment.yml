@@ -1,0 +1,65 @@
+name: Tattle Sentiment Scoring
+
+on:
+  # ── Manual trigger ─────────────────────────────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Scoring mode"
+        required: true
+        default: "pending"
+        type: choice
+        options:
+          - "pending"   # Score only unscored reviews (safe to re-run)
+          - "backfill"  # Re-score everything
+          - "recent"    # Last N days only
+      days:
+        description: "Days back for recent mode (default 14)"
+        required: false
+        default: "14"
+
+  # ── Scheduled: every Monday at 8 AM CT (14:00 UTC) ────────────────────────
+  # Runs after Tattle ingest (7 AM CT / 13:00 UTC)
+  schedule:
+    - cron: "0 14 * * 1"
+
+jobs:
+  score:
+    name: Score Tattle reviews with Claude
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests anthropic
+
+      - name: Score pending reviews (scheduled)
+        if: github.event_name == 'schedule'
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python tattle_sentiment.py --mode pending
+
+      - name: Score reviews (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode != 'recent'
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python tattle_sentiment.py --mode ${{ github.event.inputs.mode }}
+
+      - name: Score recent reviews (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'recent'
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python tattle_sentiment.py --mode recent --days ${{ github.event.inputs.days }}
