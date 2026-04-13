@@ -33,7 +33,7 @@ ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 CLAUDE_MODEL  = "claude-haiku-4-5-20251001"   # fast + cheap for bulk scoring
 BATCH_SIZE    = 500                            # rows fetched from Supabase at once
-REQUEST_DELAY = 0.1                            # seconds between Claude calls
+REQUEST_DELAY = 13                             # seconds between Claude calls (5 req/min rate limit)
 
 if not all([SUPABASE_URL, SUPABASE_KEY, ANTHROPIC_KEY]):
     print("ERROR: Missing required env vars.")
@@ -232,6 +232,24 @@ def score_review(row):
             data=json.dumps(payload),
             timeout=30,
         )
+        if r.status_code == 429:
+            # Rate limited — wait and retry up to 3 times
+            for attempt in range(1, 4):
+                wait = 30 * attempt  # 30s, 60s, 90s
+                print(f"  [RATE LIMIT] Waiting {wait}s before retry {attempt}/3...")
+                time.sleep(wait)
+                r = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers=headers,
+                    data=json.dumps(payload),
+                    timeout=30,
+                )
+                if r.status_code != 429:
+                    break
+            if r.status_code == 429:
+                print(f"  [WARN] Still rate limited after 3 retries, skipping id={row['id']}")
+                return None, None
+
         if r.status_code != 200:
             print(f"  [WARN] Claude error {r.status_code}: {r.text[:150]}")
             return None, None
