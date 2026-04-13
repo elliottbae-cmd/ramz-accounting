@@ -4502,17 +4502,35 @@ elif page == "Tattle Insights":
         daypart_stats = daypart_stats.sort_values("Avg Score")
 
         import altair as alt
+
+        # Chart 1: Avg Score by Day Part (color by relative performance)
+        median_score = daypart_stats["Avg Score"].median()
+        daypart_stats["_color"] = daypart_stats["Avg Score"].apply(
+            lambda x: "Above Median" if x >= median_score else "Below Median"
+        )
         dp_chart = alt.Chart(daypart_stats).mark_bar().encode(
             x=alt.X("Avg Score:Q", scale=alt.Scale(zero=False)),
             y=alt.Y("Day Part:N", sort="-x"),
-            color=alt.condition(
-                alt.datum["Avg Score"] >= 4,
-                alt.value("#C6EFCE"),
-                alt.value("#FFC7CE")
-            ),
+            color=alt.Color("_color:N", scale=alt.Scale(
+                domain=["Above Median", "Below Median"],
+                range=["#C6EFCE", "#FFC7CE"]
+            ), title=""),
             tooltip=["Day Part", "Reviews", "Avg Score", "% Low Score"]
         ).properties(height=250)
         st.altair_chart(dp_chart, use_container_width=True)
+
+        # Chart 2: % Negative by Day Part (the actionable view)
+        st.markdown("**% Negative Reviews by Day Part** — which periods have the most complaints?")
+        neg_sorted = daypart_stats.sort_values("% Low Score", ascending=False)
+        neg_chart = alt.Chart(neg_sorted).mark_bar().encode(
+            x=alt.X("% Low Score:Q", title="% Negative (score < 70)"),
+            y=alt.Y("Day Part:N", sort="-x"),
+            color=alt.Color("% Low Score:Q", scale=alt.Scale(
+                scheme="reds"
+            ), legend=None),
+            tooltip=["Day Part", "Reviews", "% Low Score", "Avg Score"]
+        ).properties(height=250)
+        st.altair_chart(neg_chart, use_container_width=True)
 
         st.dataframe(daypart_stats, use_container_width=True, hide_index=True)
     else:
