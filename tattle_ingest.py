@@ -263,6 +263,15 @@ def fetch_surveys(token, start_date, end_date):
             timeout=60,
         )
 
+        if r.status_code in (401, 403):
+            print("=" * 60)
+            print("  [FATAL] Tattle session token has EXPIRED or is invalid.")
+            print("  ACTION REQUIRED: Log into gettattle.com, open Chrome DevTools,")
+            print("  go to Network tab, click any API call, copy the Authorization")
+            print("  header value, and update TATTLE_SESSION_TOKEN in GitHub Secrets.")
+            print("  Long-term fix: contact customersuccess@gettattle.com for OAuth endpoint.")
+            print("=" * 60)
+            sys.exit(1)
         if r.status_code != 200:
             print(f"  [WARN] Surveys fetch failed: {r.status_code} {r.text[:200]}")
             break
