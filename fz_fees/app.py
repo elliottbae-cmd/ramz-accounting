@@ -4597,7 +4597,10 @@ elif page == "Sentiment Dashboard":
     for themes in scored["parsed_themes"]:
         ov = themes.get("overall")
         if ov is not None:
-            overall_scores.append(float(ov))
+            try:
+                overall_scores.append(float(ov))
+            except (ValueError, TypeError):
+                pass
 
     if overall_scores:
         score_df = pd.DataFrame({"score": overall_scores})
