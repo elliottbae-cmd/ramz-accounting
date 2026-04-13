@@ -31,7 +31,7 @@ SUPABASE_URL  = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-CLAUDE_MODEL  = "claude-3-5-haiku-20241022"   # fast + cheap for bulk scoring
+CLAUDE_MODEL  = "claude-haiku-4-5-20251001"   # fast + cheap for bulk scoring
 BATCH_SIZE    = 500                            # rows fetched from Supabase at once
 REQUEST_DELAY = 0.1                            # seconds between Claude calls
 
