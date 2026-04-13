@@ -4393,7 +4393,11 @@ elif page == "Tattle Insights":
         import altair as alt
         cat_chart = alt.Chart(cat_monthly).mark_line(point=True).encode(
             x=alt.X("month:N", title="Month", sort=None),
-            y=alt.Y("rating:Q", title="Avg Rating", scale=alt.Scale(zero=False)),
+            y=alt.Y("rating:Q", title="Avg Rating",
+                     scale=alt.Scale(domain=[
+                         max(0, cat_monthly["rating"].min() - 0.3),
+                         min(5, cat_monthly["rating"].max() + 0.3)
+                     ])),
             color=alt.Color("category:N", title="Category"),
             tooltip=["category", "month", "rating"]
         ).properties(height=400).interactive()
