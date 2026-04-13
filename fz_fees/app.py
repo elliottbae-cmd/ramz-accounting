@@ -4331,14 +4331,21 @@ elif page == "Tattle Insights":
         )
 
         import altair as alt
+        # Convert to 12-hour format for display
+        heatmap_data["hour_label"] = heatmap_data["hour"].apply(
+            lambda h: f"{h % 12 or 12}:00"
+        )
+        # Sort order based on original hour
+        hour_order = [f"{h % 12 or 12}:00" for h in sorted(heatmap_data["hour"].unique())]
+
         heatmap = alt.Chart(heatmap_data).mark_rect().encode(
-            x=alt.X("hour:O", title="Hour of Day",
-                     axis=alt.Axis(labelExpr="datum.value + ':00'")),
+            x=alt.X("hour_label:N", title="Hour of Day",
+                     sort=hour_order),
             y=alt.Y("day_of_week:N", title="Day",
                      sort=day_order),
             color=alt.Color("count:Q", title="Low-Score Reviews",
                            scale=alt.Scale(scheme="reds")),
-            tooltip=["day_of_week", "hour", "count"]
+            tooltip=["day_of_week", "hour_label", "count"]
         ).properties(height=280).configure_view(strokeWidth=0)
         st.altair_chart(heatmap, use_container_width=True)
 
