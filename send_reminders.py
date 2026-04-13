@@ -19,6 +19,8 @@ If EMAIL_MODE is not set, the script auto-detects from the current day of week.
 
 import os
 import sys
+import json
+import requests
 from datetime import date, timedelta, datetime, timezone
 
 # ── Dependencies ─────────────────────────────────────────────────────────────
@@ -44,6 +46,7 @@ FROM_EMAIL       = os.environ.get("SENDGRID_FROM_EMAIL", "")
 GM_PORTAL_URL    = os.environ.get("GM_PORTAL_URL", "https://ramz-gm-select.streamlit.app")
 CEO_EMAIL        = os.environ.get("CEO_EMAIL", "")
 EMAIL_MODE       = os.environ.get("EMAIL_MODE", "").strip().lower()
+ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
 
 if not all([SUPABASE_URL, SUPABASE_KEY, SENDGRID_API_KEY]):
     print("ERROR: Missing required env vars (SUPABASE_URL, SUPABASE_KEY, SENDGRID_API_KEY)")
@@ -324,8 +327,115 @@ def log_email(week_start, location_id, to_email, subject, email_type, success, e
         print(f"  \u26a0 Could not write email log: {e}")
 
 
+# ── Sentiment synthesis ───────────────────────────────────────────────────────
+def fetch_weekly_store_reviews(location_id, week_start):
+    """
+    Fetch all scored Tattle reviews for a store for the given week.
+    Returns list of review dicts or empty list.
+    """
+    week_end = week_start + timedelta(days=6)
+    try:
+        resp = (sb.table("tattle_reviews")
+                  .select("score,comment,snapshots,sentiment_themes,sentiment_summary,"
+                          "questionnaire_title,day_part_label,channel_label")
+                  .eq("location_id", location_id)
+                  .gte("completed_time", f"{week_start}T00:00:00")
+                  .lte("completed_time", f"{week_end}T23:59:59")
+                  .not_.is_("sentiment_themes", "null")
+                  .execute())
+        return resp.data or []
+    except Exception as e:
+        print(f"  [WARN] Could not fetch reviews for {location_id}: {e}")
+        return []
+
+
+def synthesize_weekly_sentiment(store_name, reviews, week_label):
+    """
+    Send a store's week of scored reviews to Claude and get back
+    a positive paragraph and a negative paragraph.
+    Returns (positive_text, negative_text) or (None, None) on failure.
+    """
+    if not ANTHROPIC_KEY or not reviews:
+        return None, None
+
+    # Build a compact summary of all reviews for Claude
+    lines = []
+    for r in reviews:
+        score   = r.get("score", "?")
+        themes  = r.get("sentiment_themes") or {}
+        overall = themes.get("overall", "unknown") if isinstance(themes, dict) else "unknown"
+        comment = r.get("comment", "") or ""
+        cats    = themes.get("categories", {}) if isinstance(themes, dict) else {}
+        cat_str = ", ".join(f"{k}: {v}" for k, v in cats.items()) if cats else ""
+        line    = f"Score:{score}/100 Sentiment:{overall}"
+        if cat_str:
+            line += f" Categories:[{cat_str}]"
+        if comment:
+            # Truncate long comments
+            line += f" Comment: {comment[:300]}"
+        lines.append(line)
+
+    review_block = "\n".join(lines)
+    total        = len(reviews)
+    positive_ct  = sum(1 for r in reviews
+                       if isinstance(r.get("sentiment_themes"), dict)
+                       and r["sentiment_themes"].get("overall") == "positive")
+    negative_ct  = sum(1 for r in reviews
+                       if isinstance(r.get("sentiment_themes"), dict)
+                       and r["sentiment_themes"].get("overall") == "negative")
+
+    prompt = f"""You are summarizing guest feedback for {store_name} for the week of {week_label}.
+
+Total reviews this week: {total}
+Positive: {positive_ct} | Negative: {negative_ct}
+
+Individual reviews:
+{review_block}
+
+Write exactly two short paragraphs (2-3 sentences each) for a GM weekly email:
+1. A POSITIVE paragraph starting with "👍" — synthesize what guests praised most this week
+2. A NEGATIVE paragraph starting with "👎" — synthesize the most common complaints or concerns
+
+Rules:
+- Be specific to actual themes mentioned, not generic
+- Do not mention individual guests or quote directly
+- Keep each paragraph under 60 words
+- If there are no negatives, write "👎 No significant complaints this week — keep it up!"
+- Return only the two paragraphs, nothing else"""
+
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key":         ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            },
+            data=json.dumps({
+                "model":      "claude-3-5-haiku-20241022",
+                "max_tokens": 300,
+                "messages":   [{"role": "user", "content": prompt}],
+            }),
+            timeout=30,
+        )
+        if r.status_code != 200:
+            print(f"  [WARN] Claude sentiment synthesis failed: {r.status_code}")
+            return None, None
+
+        text      = r.json()["content"][0]["text"].strip()
+        parts     = text.split("\n👎", 1)
+        positive  = parts[0].strip()
+        negative  = ("👎" + parts[1].strip()) if len(parts) > 1 else None
+        return positive, negative
+
+    except Exception as e:
+        print(f"  [WARN] Sentiment synthesis error: {e}")
+        return None, None
+
+
 # ── HTML email builder ────────────────────────────────────────────────────────
-def build_email_html(store_name, gm_name, week_label, portal_url, mode, perf=None):
+def build_email_html(store_name, gm_name, week_label, portal_url, mode, perf=None,
+                     sentiment=None):
     """Build branded HTML email with store performance snapshot."""
     if mode == "initial":
         heading       = "Action Required: Select Your Revenue Band"
@@ -363,6 +473,25 @@ def build_email_html(store_name, gm_name, week_label, portal_url, mode, perf=Non
 
     p = perf or {}
     avg_sos_min = fn(p.get("avg_sos") / 60 if p.get("avg_sos") is not None else None) + " min"
+
+    # ── Sentiment block ───────────────────────────────────────────────────────
+    s = sentiment or {}
+    positive_text = s.get("positive")
+    negative_text = s.get("negative")
+    if positive_text or negative_text:
+        sentiment_block = f"""
+    <table width="100%" cellpadding="8" cellspacing="0"
+           style="margin:20px 0;border-collapse:collapse;border:1px solid #e0e0e0;border-radius:6px;">
+      <tr style="background:#2B3A4E;">
+        <td style="color:#fff;font-size:14px;font-weight:bold;padding:10px 12px;border-radius:4px 4px 0 0;">
+          What Your Guests Are Saying This Week
+        </td>
+      </tr>
+      {'<tr><td style="padding:12px;font-size:14px;color:#333;line-height:1.6;border-bottom:1px solid #eee;">' + positive_text + '</td></tr>' if positive_text else ''}
+      {'<tr><td style="padding:12px;font-size:14px;color:#333;line-height:1.6;">' + negative_text + '</td></tr>' if negative_text else ''}
+    </table>"""
+    else:
+        sentiment_block = ""
 
     perf_table = f"""
     <table width="100%" cellpadding="8" cellspacing="0" style="margin:20px 0;border-collapse:collapse;">
@@ -431,6 +560,7 @@ def build_email_html(store_name, gm_name, week_label, portal_url, mode, perf=Non
       for the week of <strong>{week_label}</strong>.
     </p>
     {perf_table}
+    {sentiment_block}
     {final_block}
     <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
     <tr><td align="center">
@@ -709,8 +839,18 @@ def main():
                 except Exception as e:
                     print(f"  \u26a0 Could not create submission record for {store_name}: {e}")
 
-            perf       = load_store_performance(loc_id, target_week)
-            html_body  = build_email_html(store_name, gm_name, week_label, portal_url, mode, perf)
+            perf     = load_store_performance(loc_id, target_week)
+
+            # Fetch and synthesize weekly guest sentiment
+            sentiment = {}
+            if ANTHROPIC_KEY:
+                reviews = fetch_weekly_store_reviews(loc_id, target_week)
+                if reviews:
+                    pos, neg = synthesize_weekly_sentiment(store_name, reviews, week_label)
+                    sentiment = {"positive": pos, "negative": neg}
+
+            html_body  = build_email_html(store_name, gm_name, week_label, portal_url, mode,
+                                          perf, sentiment)
 
             # Build CC list based on escalation day
             cc_emails = []
