@@ -4570,19 +4570,48 @@ elif page == "Sentiment Dashboard":
 
     if theme_time_rows:
         tt_df = pd.DataFrame(theme_time_rows)
-        # Get top 7 themes
-        top_themes = tt_df["theme"].value_counts().head(7).index.tolist()
-        tt_filtered = tt_df[tt_df["theme"].isin(top_themes)]
+        all_themes = tt_df["theme"].value_counts().index.tolist()
+
+        # Theme filter
+        theme_filter = st.multiselect(
+            "Filter by Theme", all_themes, default=all_themes[:7],
+            key="neg_theme_filter",
+            help="Select which themes to display. Default shows top 7."
+        )
+
+        if not theme_filter:
+            theme_filter = all_themes[:7]
+
+        tt_filtered = tt_df[tt_df["theme"].isin(theme_filter)]
         tt_monthly = tt_filtered.groupby(["month", "theme"]).size().reset_index(name="mentions")
 
+        # Calculate overall average across all selected themes per month
+        overall_avg = tt_monthly.groupby("month")["mentions"].mean().reset_index()
+        overall_avg["theme"] = "── OVERALL AVG ──"
+
         import altair as alt
-        trend_chart = alt.Chart(tt_monthly).mark_line(point=True).encode(
+
+        # Individual theme lines (thinner, with points)
+        theme_lines = alt.Chart(tt_monthly).mark_line(point=True, strokeWidth=1.5, opacity=0.6).encode(
             x=alt.X("month:N", title="Month", sort=None),
             y=alt.Y("mentions:Q", title="Mentions"),
             color=alt.Color("theme:N", title="Theme"),
             tooltip=["theme", "month", "mentions"]
-        ).properties(height=400).interactive()
-        st.altair_chart(trend_chart, use_container_width=True)
+        )
+
+        # Overall average line (bold, dark)
+        avg_line = alt.Chart(overall_avg).mark_line(
+            strokeWidth=4, strokeDash=[0], point=True
+        ).encode(
+            x=alt.X("month:N", sort=None),
+            y=alt.Y("mentions:Q"),
+            color=alt.value("#2B3A4E"),
+            tooltip=[alt.Tooltip("theme:N", title=""), "month", alt.Tooltip("mentions:Q", title="Avg Mentions", format=".1f")]
+        )
+
+        combined = (theme_lines + avg_line).properties(height=400).interactive()
+        st.altair_chart(combined, use_container_width=True)
+        st.caption("**Bold dark line** = overall average across selected themes. Individual themes shown lighter.")
     else:
         st.info("Not enough data to show theme trends.")
 
