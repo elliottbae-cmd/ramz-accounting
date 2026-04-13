@@ -153,16 +153,29 @@ def _cached_votg_data():
 
 @st.cache_data(ttl=300)
 def _cached_tattle_reviews():
-    """Load all Tattle reviews with key fields for analysis."""
+    """Load all Tattle reviews with key fields for analysis. Paginates to get all rows."""
     from supabase_db import get_supabase
     sb = get_supabase()
     try:
-        resp = sb.table("tattle_reviews").select(
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        fields = (
             "id,location_id,location_label,score,cer,"
             "experienced_time,completed_time,day_part_label,channel_label,"
             "comment,snapshots,sentiment_themes,sentiment_summary"
-        ).order("experienced_time", desc=True).limit(10000).execute()
-        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+        )
+        while True:
+            resp = sb.table("tattle_reviews").select(fields).order(
+                "experienced_time", desc=True
+            ).range(offset, offset + page_size - 1).execute()
+            if not resp.data:
+                break
+            all_rows.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            offset += page_size
+        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
 
