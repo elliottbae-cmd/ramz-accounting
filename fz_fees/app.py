@@ -4393,7 +4393,7 @@ elif page == "Tattle Insights":
         import altair as alt
         cat_chart = alt.Chart(cat_monthly).mark_line(point=True).encode(
             x=alt.X("month:N", title="Month", sort=None),
-            y=alt.Y("rating:Q", title="Avg Rating", scale=alt.Scale(domain=[0, 5])),
+            y=alt.Y("rating:Q", title="Avg Rating", scale=alt.Scale(zero=False)),
             color=alt.Color("category:N", title="Category"),
             tooltip=["category", "month", "rating"]
         ).properties(height=400).interactive()
@@ -4434,7 +4434,7 @@ elif page == "Tattle Insights":
 
         import altair as alt
         dp_chart = alt.Chart(daypart_stats).mark_bar().encode(
-            x=alt.X("Avg Score:Q", scale=alt.Scale(domain=[0, 5])),
+            x=alt.X("Avg Score:Q", scale=alt.Scale(zero=False)),
             y=alt.Y("Day Part:N", sort="-x"),
             color=alt.condition(
                 alt.datum["Avg Score"] >= 4,
