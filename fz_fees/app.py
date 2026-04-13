@@ -4501,29 +4501,57 @@ elif page == "Sentiment Dashboard":
     st.divider()
 
     # --- Theme Frequency ---
-    st.subheader("🔍 Most Common Issues")
-    st.caption("Which themes come up most frequently in guest comments?")
+    st.subheader("🔍 Most Common Themes — Negative vs Positive")
+    st.caption("Side-by-side comparison of what guests complain about vs. what they praise.")
 
-    theme_counts = {}
-    for themes in scored["parsed_themes"]:
-        for theme in themes.get("themes", []):
-            theme_counts[theme] = theme_counts.get(theme, 0) + 1
+    # Split scored reviews into negative (score <= 3) and positive (score > 3)
+    neg_scored = scored[scored["score"].apply(lambda x: float(x) <= 3 if pd.notna(x) else False)]
+    pos_scored = scored[scored["score"].apply(lambda x: float(x) > 3 if pd.notna(x) else False)]
 
-    if theme_counts:
-        theme_df = pd.DataFrame([
-            {"Theme": k, "Count": v} for k, v in theme_counts.items()
-        ]).sort_values("Count", ascending=False)
+    def count_themes(df):
+        counts = {}
+        for themes in df["parsed_themes"]:
+            for theme in themes.get("themes", []):
+                counts[theme] = counts.get(theme, 0) + 1
+        return counts
 
-        import altair as alt
-        theme_chart = alt.Chart(theme_df.head(10)).mark_bar().encode(
-            x=alt.X("Count:Q", title="Mentions"),
-            y=alt.Y("Theme:N", sort="-x", title=""),
-            color=alt.value("#C49A5C"),
-            tooltip=["Theme", "Count"]
-        ).properties(height=300)
-        st.altair_chart(theme_chart, use_container_width=True)
-    else:
-        st.info("No themes parsed from scored reviews.")
+    neg_counts = count_themes(neg_scored)
+    pos_counts = count_themes(pos_scored)
+
+    import altair as alt
+    col_neg, col_pos = st.columns(2)
+
+    with col_neg:
+        st.markdown(f"**Negative Reviews** ({len(neg_scored):,} reviews)")
+        if neg_counts:
+            neg_df = pd.DataFrame([
+                {"Theme": k, "Count": v} for k, v in neg_counts.items()
+            ]).sort_values("Count", ascending=False)
+            neg_chart = alt.Chart(neg_df.head(10)).mark_bar().encode(
+                x=alt.X("Count:Q", title="Mentions"),
+                y=alt.Y("Theme:N", sort="-x", title=""),
+                color=alt.value("#FFC7CE"),
+                tooltip=["Theme", "Count"]
+            ).properties(height=300)
+            st.altair_chart(neg_chart, use_container_width=True)
+        else:
+            st.info("No negative review themes.")
+
+    with col_pos:
+        st.markdown(f"**Positive Reviews** ({len(pos_scored):,} reviews)")
+        if pos_counts:
+            pos_df = pd.DataFrame([
+                {"Theme": k, "Count": v} for k, v in pos_counts.items()
+            ]).sort_values("Count", ascending=False)
+            pos_chart = alt.Chart(pos_df.head(10)).mark_bar().encode(
+                x=alt.X("Count:Q", title="Mentions"),
+                y=alt.Y("Theme:N", sort="-x", title=""),
+                color=alt.value("#C6EFCE"),
+                tooltip=["Theme", "Count"]
+            ).properties(height=300)
+            st.altair_chart(pos_chart, use_container_width=True)
+        else:
+            st.info("No positive review themes.")
 
     st.divider()
 
