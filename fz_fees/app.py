@@ -4647,27 +4647,29 @@ elif page == "Sentiment Dashboard":
 
     st.divider()
 
-    # --- Overall Sentiment Score Distribution ---
-    st.subheader("📊 Overall Sentiment Score Distribution")
+    # --- Overall Score Distribution ---
+    st.subheader("📊 Guest Score Distribution")
 
-    overall_scores = []
-    for themes in scored["parsed_themes"]:
-        ov = themes.get("overall")
-        if ov is not None:
-            try:
-                overall_scores.append(float(ov))
-            except (ValueError, TypeError):
-                pass
+    valid_scores = scored[scored["score"].notna()].copy()
+    valid_scores["score_num"] = pd.to_numeric(valid_scores["score"], errors="coerce")
+    valid_scores = valid_scores[valid_scores["score_num"].notna()]
 
-    if overall_scores:
-        score_df = pd.DataFrame({"score": overall_scores})
+    if not valid_scores.empty:
         import altair as alt
-        hist = alt.Chart(score_df).mark_bar().encode(
-            x=alt.X("score:Q", bin=alt.Bin(step=0.5), title="Sentiment Score"),
+        hist = alt.Chart(valid_scores).mark_bar().encode(
+            x=alt.X("score_num:Q", bin=alt.Bin(step=0.5), title="Guest Score"),
             y=alt.Y("count():Q", title="Reviews"),
-            color=alt.value("#2B3A4E"),
+            color=alt.condition(
+                alt.datum.score_num >= 4,
+                alt.value("#C6EFCE"),
+                alt.value("#FFC7CE")
+            ),
         ).properties(height=250)
         st.altair_chart(hist, use_container_width=True)
 
-        avg_sent = sum(overall_scores) / len(overall_scores)
-        st.metric("Average Sentiment Score", f"{avg_sent:.2f} / 5.0")
+        avg_score = valid_scores["score_num"].mean()
+        neg_pct = (valid_scores["score_num"] <= 3).mean() * 100
+        sc1, sc2, sc3 = st.columns(3)
+        sc1.metric("Average Score", f"{avg_score:.2f}")
+        sc2.metric("Negative Reviews", f"{neg_pct:.1f}%")
+        sc3.metric("Total Scored", f"{len(valid_scores):,}")
