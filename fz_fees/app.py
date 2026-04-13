@@ -4416,7 +4416,17 @@ elif page == "Tattle Insights":
                     else ("📉 Declining" if r[cols[-1]] < r[cols[-2]] else "➡️ Flat"),
                     axis=1
                 )
-            st.dataframe(cat_pivot, use_container_width=True)
+            # Style: widen category column, center headers
+            styled_cat = cat_pivot.reset_index()
+            styled_cat = styled_cat.rename(columns={"category": "Category"})
+            st.dataframe(
+                styled_cat,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Category": st.column_config.TextColumn("Category", width="large"),
+                },
+            )
     else:
         st.info("No category-level data available in the reviews.")
 
