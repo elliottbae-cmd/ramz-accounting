@@ -233,11 +233,12 @@ def score_review(row):
             data=json.dumps(payload),
             timeout=30,
         )
-        if r.status_code == 429:
-            # Rate limited — wait and retry up to 3 times
+        if r.status_code in (429, 529):
+            # Rate limited or overloaded — wait and retry up to 3 times
+            err_type = "RATE LIMIT" if r.status_code == 429 else "OVERLOADED"
             for attempt in range(1, 4):
                 wait = 30 * attempt  # 30s, 60s, 90s
-                print(f"  [RATE LIMIT] Waiting {wait}s before retry {attempt}/3...")
+                print(f"  [{err_type}] Waiting {wait}s before retry {attempt}/3...")
                 time.sleep(wait)
                 r = requests.post(
                     "https://api.anthropic.com/v1/messages",
@@ -245,10 +246,10 @@ def score_review(row):
                     data=json.dumps(payload),
                     timeout=30,
                 )
-                if r.status_code != 429:
+                if r.status_code not in (429, 529):
                     break
-            if r.status_code == 429:
-                print(f"  [WARN] Still rate limited after 3 retries, skipping id={row['id']}")
+            if r.status_code in (429, 529):
+                print(f"  [WARN] Still {err_type.lower()} after 3 retries, skipping id={row['id']}")
                 return None, None
 
         if r.status_code != 200:
