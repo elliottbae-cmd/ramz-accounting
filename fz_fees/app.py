@@ -2088,39 +2088,92 @@ elif page == "Store Revenue Bands":
 
                     cfg = cfg.sort_values("location_id").reset_index(drop=True)
 
+                    # Load most recent LOCKED week before this one to compare band changes
+                    prev_bands = {}
+                    search_w = w - timedelta(days=7)
+                    for _ in range(12):  # Search up to 12 weeks back
+                        if lock_exists(search_w):
+                            prev_cfg = load_locked_config(search_w)
+                            if prev_cfg is not None and not prev_cfg.empty:
+                                prev_bands = dict(zip(prev_cfg["location_id"], prev_cfg["revenue_band"]))
+                            break
+                        search_w -= timedelta(days=7)
+
+                    # Band ordering for comparison (higher index = higher band)
+                    BAND_ORDER = [
+                        "<25k", "25k-30k", "30k-35k", "35k-40k",
+                        "40k-45k", "45k-50k", "50k+", "NRO", "NRO Seasoned"
+                    ]
+                    def band_rank(b):
+                        try:
+                            return BAND_ORDER.index(b)
+                        except ValueError:
+                            return -1
+
                     # Sheet name (max 31 chars for Excel)
                     sheet_name = label.replace(" – ", "-").replace("/", "-")[:31]
                     ws = wb.create_sheet(title=sheet_name)
 
+                    GREEN_FILL = PatternFill("solid", fgColor="C6EFCE")
+                    RED_FILL = PatternFill("solid", fgColor="FFC7CE")
+
                     # Title row
-                    ws.merge_cells("A1:D1")
+                    ws.merge_cells("A1:E1")
                     title_cell = ws["A1"]
                     title_cell.value = f"Ram-Z Restaurant Group — Store Config: {label}"
                     title_cell.font = Font(name="Calibri", bold=True, color=NAVY, size=14)
                     title_cell.alignment = left
 
                     # Status row
-                    ws.merge_cells("A2:D2")
+                    ws.merge_cells("A2:E2")
                     status_cell = ws["A2"]
                     status_cell.value = f"Status: {status.upper()}"
                     status_cell.font = Font(name="Calibri", bold=True, color=GOLD, size=10)
 
+                    # Legend row
+                    ws["A3"].value = "Legend:"
+                    ws["A3"].font = Font(name="Calibri", size=9, italic=True)
+                    ws["B3"].fill = GREEN_FILL
+                    ws["B3"].value = "Band Increased"
+                    ws["B3"].font = Font(name="Calibri", size=9)
+                    ws["C3"].fill = RED_FILL
+                    ws["C3"].value = "Band Decreased"
+                    ws["C3"].font = Font(name="Calibri", size=9)
+
                     # Headers
-                    headers = ["Store #", "Store Name", "Revenue Band", "Hourly Goal"]
+                    headers = ["Store #", "Store Name", "Revenue Band", "Hourly Goal", "Change"]
                     for col_idx, h in enumerate(headers, 1):
-                        cell = ws.cell(row=4, column=col_idx, value=h)
+                        cell = ws.cell(row=5, column=col_idx, value=h)
                         cell.font = header_font
                         cell.fill = header_fill
                         cell.alignment = center
                         cell.border = thin_border
 
                     # Data rows
-                    for row_idx, (_, r) in enumerate(cfg.iterrows(), 5):
+                    for row_idx, (_, r) in enumerate(cfg.iterrows(), 6):
+                        loc_id = r.get("location_id", "")
+                        curr_band = r.get("revenue_band", "")
+                        prev_band = prev_bands.get(loc_id)
+
+                        # Determine band change
+                        change_label = ""
+                        row_fill = None
+                        if prev_band and prev_band != curr_band:
+                            curr_rank = band_rank(curr_band)
+                            prev_rank_val = band_rank(prev_band)
+                            if curr_rank > prev_rank_val:
+                                change_label = f"↑ {prev_band} → {curr_band}"
+                                row_fill = GREEN_FILL
+                            elif curr_rank < prev_rank_val:
+                                change_label = f"↓ {prev_band} → {curr_band}"
+                                row_fill = RED_FILL
+
                         values = [
-                            r.get("location_id", ""),
+                            loc_id,
                             r.get("store_name", ""),
-                            r.get("revenue_band", ""),
+                            curr_band,
                             float(r.get("hourly_goal", 0)) if pd.notna(r.get("hourly_goal")) else 0,
+                            change_label,
                         ]
                         for col_idx, val in enumerate(values, 1):
                             cell = ws.cell(row=row_idx, column=col_idx, value=val)
@@ -2130,20 +2183,24 @@ elif page == "Store Revenue Bands":
                                 cell.alignment = center
                             else:
                                 cell.alignment = left
-                            if row_idx % 2 == 1:
+                            # Apply band change highlight
+                            if row_fill:
+                                cell.fill = row_fill
+                            elif row_idx % 2 == 1:
                                 cell.fill = stripe_fill
                             # Format hourly goal as integer
                             if col_idx == 4:
                                 cell.number_format = "#,##0"
 
                     # Auto-fit column widths
-                    for col_idx in range(1, 5):
+                    from openpyxl.utils import get_column_letter
+                    for col_idx in range(1, 6):
                         max_len = len(headers[col_idx - 1])
-                        for row_idx in range(5, 5 + len(cfg)):
+                        for row_idx in range(6, 6 + len(cfg)):
                             val = ws.cell(row=row_idx, column=col_idx).value
                             if val:
                                 max_len = max(max_len, len(str(val)))
-                        ws.column_dimensions[chr(64 + col_idx)].width = max_len + 3
+                        ws.column_dimensions[get_column_letter(col_idx)].width = max_len + 3
 
                 buf = BytesIO()
                 wb.save(buf)
