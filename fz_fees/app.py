@@ -4988,10 +4988,19 @@ elif page == "Sentiment Dashboard":
                          alt.Tooltip("neg_pct:Q", title="Negative %", format=".1f")]
             )
 
-            # Trend line for negative % (linear regression)
-            neg_trend = alt.Chart(monthly_stats).transform_regression(
-                "month", "neg_pct", method="linear", as_=["month", "neg_trend"]
-            ).mark_line(strokeDash=[6, 3], strokeWidth=2, color="#D32F2F").encode(
+            # Trend line for negative % (manual linear regression)
+            import numpy as np
+            _x_nums = np.arange(len(monthly_stats))
+            _y_vals = monthly_stats["neg_pct"].values
+            if len(_x_nums) >= 2:
+                _slope, _intercept = np.polyfit(_x_nums, _y_vals, 1)
+                monthly_stats["neg_trend"] = _intercept + _slope * _x_nums
+            else:
+                monthly_stats["neg_trend"] = monthly_stats["neg_pct"]
+
+            neg_trend = alt.Chart(monthly_stats).mark_line(
+                strokeDash=[6, 3], strokeWidth=2, color="#D32F2F"
+            ).encode(
                 x=alt.X("month:N", sort=None),
                 y=alt.Y("neg_trend:Q", scale=neg_y_scale),
             )
