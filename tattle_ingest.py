@@ -278,6 +278,16 @@ def fetch_surveys(token, start_date, end_date):
 
         data = r.json()
         batch = data.get("data", [])
+
+        # Log all available fields from first survey (one-time debug)
+        if page == 1 and batch:
+            print(f"\n  [DEBUG] All fields in survey object:")
+            for key in sorted(batch[0].keys()):
+                val = batch[0][key]
+                preview = str(val)[:80] if val is not None else "null"
+                print(f"    {key}: {preview}")
+            print()
+
         all_surveys.extend(batch)
 
         total = data.get("total", 0)
