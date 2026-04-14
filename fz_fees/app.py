@@ -131,23 +131,47 @@ def _cached_weekly_actuals():
 
 @st.cache_data(ttl=300)
 def _cached_sos_data():
-    """Load all SoS weekly data."""
+    """Load all SoS weekly data. Paginates to get all rows."""
     from supabase_db import get_supabase
     sb = get_supabase()
     try:
-        resp = sb.table("store_sos_weekly").select("*").order("week_start", desc=True).execute()
-        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            resp = sb.table("store_sos_weekly").select("*").order(
+                "week_start", desc=True
+            ).range(offset, offset + page_size - 1).execute()
+            if not resp.data:
+                break
+            all_rows.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            offset += page_size
+        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def _cached_votg_data():
-    """Load all VOTG weekly data."""
+    """Load all VOTG weekly data. Paginates to get all rows."""
     from supabase_db import get_supabase
     sb = get_supabase()
     try:
-        resp = sb.table("store_votg_weekly").select("*").order("week_start", desc=True).execute()
-        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            resp = sb.table("store_votg_weekly").select("*").order(
+                "week_start", desc=True
+            ).range(offset, offset + page_size - 1).execute()
+            if not resp.data:
+                break
+            all_rows.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            offset += page_size
+        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
 
