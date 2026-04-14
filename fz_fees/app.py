@@ -151,9 +151,10 @@ def _cached_votg_data():
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)
-def _cached_tattle_reviews():
-    """Load all Tattle reviews with key fields for analysis. Paginates to get all rows."""
+@st.cache_data(ttl=1800)
+def _cached_tattle_reviews_light():
+    """Load Tattle reviews WITHOUT snapshots (lighter query for Tattle Insights page).
+    TTL=30min — reviews don't change frequently."""
     from supabase_db import get_supabase
     sb = get_supabase()
     try:
@@ -163,12 +164,69 @@ def _cached_tattle_reviews():
         fields = (
             "id,location_id,location_label,score,cer,"
             "experienced_time,completed_time,day_part_label,channel_label,"
-            "comment,snapshots,sentiment_themes,sentiment_summary"
+            "comment"
         )
         while True:
             resp = sb.table("tattle_reviews").select(fields).order(
                 "experienced_time", desc=True
             ).range(offset, offset + page_size - 1).execute()
+            if not resp.data:
+                break
+            all_rows.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            offset += page_size
+        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=1800)
+def _cached_tattle_with_snapshots():
+    """Load Tattle reviews WITH snapshots (heavier query, only for category analysis).
+    TTL=30min."""
+    from supabase_db import get_supabase
+    sb = get_supabase()
+    try:
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        fields = "id,location_id,score,experienced_time,snapshots"
+        while True:
+            resp = sb.table("tattle_reviews").select(fields).order(
+                "experienced_time", desc=True
+            ).not_.is_("snapshots", "null").range(
+                offset, offset + page_size - 1
+            ).execute()
+            if not resp.data:
+                break
+            all_rows.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            offset += page_size
+        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=1800)
+def _cached_tattle_scored():
+    """Load only sentiment-scored reviews (for Sentiment Dashboard).
+    TTL=30min."""
+    from supabase_db import get_supabase
+    sb = get_supabase()
+    try:
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        fields = (
+            "id,location_id,score,experienced_time,comment,"
+            "sentiment_themes,sentiment_summary"
+        )
+        while True:
+            resp = sb.table("tattle_reviews").select(fields).order(
+                "experienced_time", desc=True
+            ).not_.is_("sentiment_themes", "null").range(
+                offset, offset + page_size - 1
+            ).execute()
             if not resp.data:
                 break
             all_rows.extend(resp.data)
@@ -4336,7 +4394,7 @@ elif page == "Tattle Insights":
     st.caption("Time-of-day patterns, category trends, and day-part analysis from guest feedback.")
 
     ref_data = _cached_reference_data()
-    reviews_df = _cached_tattle_reviews()
+    reviews_df = _cached_tattle_reviews_light()
 
     if reviews_df.empty:
         st.info("No Tattle review data available. Run the Tattle ingestion workflow first.")
@@ -4356,7 +4414,7 @@ elif page == "Tattle Insights":
     reviews_df["month"] = reviews_df["experienced_time"].dt.to_period("M").astype(str)
     reviews_df["week"] = reviews_df["experienced_time"].dt.isocalendar().week.astype(int)
 
-    # Parse snapshots (category ratings)
+    # Parse snapshots (loaded separately — only reviews with snapshots)
     def parse_snapshots(snap_str):
         if pd.isna(snap_str) or not snap_str:
             return {}
@@ -4364,7 +4422,6 @@ elif page == "Tattle Insights":
             snaps = json.loads(snap_str) if isinstance(snap_str, str) else snap_str
             result = {}
             for s in snaps:
-                # Tattle stores as "category", fall back to "name" or "label"
                 cat = s.get("category") or s.get("name") or s.get("label") or "Unknown"
                 rating = s.get("rating")
                 if rating is not None:
@@ -4372,8 +4429,6 @@ elif page == "Tattle Insights":
             return result
         except Exception:
             return {}
-
-    reviews_df["categories"] = reviews_df["snapshots"].apply(parse_snapshots)
 
     # --- Filters ---
     dm_list = sorted(reviews_df["dm"].dropna().unique().tolist())
@@ -4466,9 +4521,26 @@ elif page == "Tattle Insights":
     st.subheader("📊 Category Trends — Month over Month")
     st.caption("Average rating by category across months. Track which areas are improving or declining.")
 
+    # Load snapshots separately (heavier query, only for category analysis)
+    snap_df = _cached_tattle_with_snapshots()
+    if not snap_df.empty:
+        snap_df["experienced_time"] = pd.to_datetime(snap_df["experienced_time"], errors="coerce")
+        snap_df["month"] = snap_df["experienced_time"].dt.to_period("M").astype(str)
+        snap_df["store"] = snap_df["location_id"].map(store_lookup)
+        snap_df["categories"] = snap_df["snapshots"].apply(parse_snapshots)
+        # Apply same filters
+        if dm_filter:
+            snap_df["dm"] = snap_df["location_id"].map(dm_lookup)
+            snap_df = snap_df[snap_df["dm"].isin(dm_filter)]
+        if store_filter:
+            snap_df = snap_df[snap_df["store"].isin(store_filter)]
+        filtered_snap = snap_df
+    else:
+        filtered_snap = pd.DataFrame()
+
     # Explode categories into rows
     cat_rows = []
-    for _, row in filtered.iterrows():
+    for _, row in (filtered_snap.iterrows() if not filtered_snap.empty else []):
         cats = row["categories"]
         if cats:
             for cat_name, rating in cats.items():
@@ -4530,7 +4602,7 @@ elif page == "Tattle Insights":
     st.caption("Count of reviews scoring below 70 per category. Fewer = improving. A downward trend is good.")
 
     neg_cat_rows = []
-    for _, row in filtered.iterrows():
+    for _, row in (filtered_snap.iterrows() if not filtered_snap.empty else []):
         score_val = pd.to_numeric(row.get("score"), errors="coerce")
         if pd.notna(score_val) and score_val < 70:
             cats = row["categories"]
@@ -4638,23 +4710,23 @@ elif page == "Sentiment Dashboard":
     st.caption("AI-powered analysis of guest review themes — powered by Claude sentiment scoring.")
 
     ref_data = _cached_reference_data()
-    reviews_df = _cached_tattle_reviews()
+    scored = _cached_tattle_scored()
+    # Get total comment count from light query
+    light_df = _cached_tattle_reviews_light()
+    total_reviews = len(light_df[light_df["comment"].notna()]) if not light_df.empty else 0
 
-    if reviews_df.empty:
+    if scored.empty:
         st.info("No Tattle review data available.")
         st.stop()
 
     # Build lookups
     store_lookup = dict(zip(ref_data["location_id"], ref_data["store_name"]))
     dm_lookup = dict(zip(ref_data["location_id"], ref_data["dm"]))
-    reviews_df["store"] = reviews_df["location_id"].map(store_lookup)
-    reviews_df["dm"] = reviews_df["location_id"].map(dm_lookup)
-    reviews_df["experienced_time"] = pd.to_datetime(reviews_df["experienced_time"], errors="coerce")
-    reviews_df["month"] = reviews_df["experienced_time"].dt.to_period("M").astype(str)
+    scored["store"] = scored["location_id"].map(store_lookup)
+    scored["dm"] = scored["location_id"].map(dm_lookup)
+    scored["experienced_time"] = pd.to_datetime(scored["experienced_time"], errors="coerce")
+    scored["month"] = scored["experienced_time"].dt.to_period("M").astype(str)
 
-    # Filter to reviews that have been scored
-    scored = reviews_df[reviews_df["sentiment_themes"].notna()].copy()
-    total_reviews = len(reviews_df[reviews_df["comment"].notna()])
     scored_count = len(scored)
 
     st.metric("Scored Reviews", f"{scored_count:,} / {total_reviews:,} with comments")
