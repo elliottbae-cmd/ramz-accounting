@@ -4253,14 +4253,14 @@ elif page == "SoS/VOTG Trends":
                 point=True, strokeWidth=3, color="#2B3A4E"
             ).encode(
                 x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
-                y=alt.Y("avg_rank:Q", title="Avg Rank (lower = better)",
-                        scale=alt.Scale(reverse=True, zero=False)),
+                y=alt.Y("avg_rank:Q", title="Avg Rank",
+                        scale=alt.Scale(zero=False)),
                 tooltip=[alt.Tooltip("week_start:T", title="Week"),
                          alt.Tooltip("avg_rank:Q", title="Avg Rank", format=".1f"),
                          alt.Tooltip("stores:Q", title="Stores")]
             ).properties(height=350).interactive()
             st.altair_chart(avg_chart, use_container_width=True)
-            st.caption("Portfolio average SoS rank across all filtered stores. Lower = better.")
+            st.caption("Portfolio average SoS rank. Line going up = rank number increasing (getting worse). Line going down = improving.")
 
             # Identify stores on a negative trend (rank getting worse)
             st.markdown("**⚠️ Stores Trending Negative** (rank getting worse over recent weeks)")
@@ -4337,15 +4337,15 @@ elif page == "SoS/VOTG Trends":
                 point=True, strokeWidth=3, color="#2B3A4E"
             ).encode(
                 x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
-                y=alt.Y("avg_rank:Q", title="Avg Rank (lower = better)",
-                        scale=alt.Scale(reverse=True, zero=False)),
+                y=alt.Y("avg_rank:Q", title="Avg Rank",
+                        scale=alt.Scale(zero=False)),
                 tooltip=[alt.Tooltip("week_start:T", title="Week"),
                          alt.Tooltip("avg_rank:Q", title="Avg Rank", format=".1f"),
                          alt.Tooltip("avg_neg:Q", title="Avg Neg Reviews", format=".1f"),
                          alt.Tooltip("stores:Q", title="Stores")]
             ).properties(height=350).interactive()
             st.altair_chart(votg_avg_chart, use_container_width=True)
-            st.caption("Portfolio average VOTG rank across all filtered stores. Lower = better.")
+            st.caption("Portfolio average VOTG rank. Line going up = rank number increasing (getting worse). Line going down = improving.")
 
             # Identify stores on a negative trend
             st.markdown("**⚠️ Stores Trending Negative** (rank getting worse over recent weeks)")
