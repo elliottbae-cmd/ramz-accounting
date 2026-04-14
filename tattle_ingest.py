@@ -371,12 +371,17 @@ def ingest(start_date, end_date, mode="weekly"):
     token = get_tattle_token()
 
     # Load existing IDs to avoid re-fetching comments we already have
-    print("\nLoading existing survey IDs from Supabase...")
-    if mode == "backfill":
-        existing_ids = sb_get_all_existing_ids()
+    # In "refresh" mode, we re-process ALL surveys to backfill new fields
+    if mode == "refresh":
+        print("\nRefresh mode — will re-process ALL surveys to update fields...")
+        existing_ids = set()  # Don't skip any
     else:
-        existing_ids = sb_get_existing_ids(start_date, end_date)
-    print(f"  {len(existing_ids)} surveys already in Supabase")
+        print("\nLoading existing survey IDs from Supabase...")
+        if mode == "backfill":
+            existing_ids = sb_get_all_existing_ids()
+        else:
+            existing_ids = sb_get_existing_ids(start_date, end_date)
+        print(f"  {len(existing_ids)} surveys already in Supabase")
 
     # Fetch surveys from Tattle
     surveys = fetch_surveys(token, start_date, end_date)
@@ -387,6 +392,34 @@ def ingest(start_date, end_date, mode="weekly"):
         if str(s.get("locationExternalId", "")).startswith("112-")
     ]
     print(f"\n  {len(surveys)} total surveys → {len(ram_z_surveys)} Ram-Z surveys")
+
+    if mode == "refresh":
+        # In refresh mode, update survey-level fields without re-fetching snapshots
+        print(f"\n  Updating {len(ram_z_surveys)} surveys with new fields (no snapshot re-fetch)...")
+        ingested_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        update_rows = []
+        for survey in ram_z_surveys:
+            update_rows.append({
+                "id":                  survey["id"],
+                "customer_email":      survey.get("customerEmail"),
+                "share_email":         survey.get("shareEmail"),
+                "customer_id":         survey.get("customerId"),
+                "customer_first_name": survey.get("customerFirstName") or None,
+                "customer_last_name":  survey.get("customerLastName") or None,
+                "incident_id":         survey.get("incidentId"),
+                "message_count":       survey.get("messageCount", 0),
+                "has_unread_messages": survey.get("hasUnreadMessages", False),
+                "tag_labels":          json.dumps(survey.get("tagLabels", [])),
+                "reward_redeemed":     survey.get("rewardRedeemedAmount", 0.0),
+            })
+            if len(update_rows) >= 500:
+                sb_upsert("tattle_reviews", update_rows)
+                print(f"    {len(update_rows)} rows upserted...")
+                update_rows = []
+        if update_rows:
+            sb_upsert("tattle_reviews", update_rows)
+        print(f"\n✓ Refresh complete — {len(ram_z_surveys)} surveys updated with new fields.")
+        return
 
     # Skip already-ingested surveys
     new_surveys = [s for s in ram_z_surveys if s["id"] not in existing_ids]
@@ -427,6 +460,17 @@ def ingest(start_date, end_date, mode="weekly"):
             "sentiment_themes":    None,
             "sentiment_summary":   None,
             "ingested_at":         ingested_at,
+            # Customer & engagement fields
+            "customer_email":      survey.get("customerEmail"),
+            "share_email":         survey.get("shareEmail"),
+            "customer_id":         survey.get("customerId"),
+            "customer_first_name": survey.get("customerFirstName") or None,
+            "customer_last_name":  survey.get("customerLastName") or None,
+            "incident_id":         survey.get("incidentId"),
+            "message_count":       survey.get("messageCount", 0),
+            "has_unread_messages": survey.get("hasUnreadMessages", False),
+            "tag_labels":          json.dumps(survey.get("tagLabels", [])),
+            "reward_redeemed":     survey.get("rewardRedeemedAmount", 0.0),
         }
         rows.append(row)
 
@@ -447,7 +491,7 @@ def ingest(start_date, end_date, mode="weekly"):
 def main():
     parser = argparse.ArgumentParser(description="Tattle review ingestion")
     parser.add_argument("--mode",  default="weekly",
-                        choices=["weekly", "backfill", "custom"])
+                        choices=["weekly", "backfill", "custom", "refresh"])
     parser.add_argument("--start", help="Start date YYYY-MM-DD (custom mode)")
     parser.add_argument("--end",   help="End date YYYY-MM-DD (custom mode)")
     args = parser.parse_args()
@@ -459,6 +503,9 @@ def main():
         end_date   = today
     elif args.mode == "backfill":
         start_date = date(2023, 1, 1)   # Pull everything from 2023 onward
+        end_date   = today
+    elif args.mode == "refresh":
+        start_date = date(2023, 1, 1)   # Re-fetch all to update fields
         end_date   = today
     elif args.mode == "custom":
         if not args.start or not args.end:

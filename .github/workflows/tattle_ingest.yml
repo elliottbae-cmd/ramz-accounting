@@ -12,6 +12,7 @@ on:
         options:
           - "weekly"    # Last 7 days (default)
           - "backfill"  # All history from 2023-01-01 (seed run)
+          - "refresh"   # Re-fetch all surveys to update fields (no snapshot re-fetch)
           - "custom"    # Use start/end inputs below
       start_date:
         description: "Start date YYYY-MM-DD (custom mode only)"
