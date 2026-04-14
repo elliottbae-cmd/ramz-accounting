@@ -4979,18 +4979,27 @@ elif page == "Sentiment Dashboard":
                          alt.Tooltip("reviews:Q", title="Reviews")]
             )
 
+            neg_y_scale = alt.Scale(domain=[0, max(50, monthly_stats["neg_pct"].max() + 5)])
+
             neg_bars = alt.Chart(monthly_stats).mark_bar(opacity=0.4, color="#FFC7CE").encode(
                 x=alt.X("month:N", sort=None),
-                y=alt.Y("neg_pct:Q", title="Negative %",
-                         scale=alt.Scale(domain=[0, max(50, monthly_stats["neg_pct"].max() + 5)])),
+                y=alt.Y("neg_pct:Q", title="Negative %", scale=neg_y_scale),
                 tooltip=[alt.Tooltip("month:N", title="Month"),
                          alt.Tooltip("neg_pct:Q", title="Negative %", format=".1f")]
             )
 
-            combined = alt.layer(neg_bars, score_line).resolve_scale(
+            # Trend line for negative % (linear regression)
+            neg_trend = alt.Chart(monthly_stats).transform_regression(
+                "month", "neg_pct", method="linear", as_=["month", "neg_trend"]
+            ).mark_line(strokeDash=[6, 3], strokeWidth=2, color="#D32F2F").encode(
+                x=alt.X("month:N", sort=None),
+                y=alt.Y("neg_trend:Q", scale=neg_y_scale),
+            )
+
+            combined = alt.layer(neg_bars, neg_trend, score_line).resolve_scale(
                 y="independent"
             ).properties(height=300)
             st.altair_chart(combined, use_container_width=True)
-            st.caption("**Red bars** = Negative % (left axis) · **Dark line** = Average Score (right axis)")
+            st.caption("**Red bars** = Negative % (left axis) · **Red dashed line** = Negative % trend · **Dark line** = Average Score (right axis)")
         else:
             st.info("Need at least 2 months of data to show trend.")
