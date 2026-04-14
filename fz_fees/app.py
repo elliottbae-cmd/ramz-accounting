@@ -3857,14 +3857,17 @@ elif page == "Sales Forecasts":
 
         return updated, None
 
-    # ── Load available forecast weeks ──────────────────────────────────────────
+    # ── Load available forecast weeks (cached) ───────────────────────────────
     sb = _get_sb()
+
+    @st.cache_data(ttl=300)
+    def _get_forecast_weeks():
+        _sb = _get_sb()
+        resp = _sb.table("sales_forecasts").select("week_start").execute()
+        return sorted({r['week_start'] for r in (resp.data or [])}, reverse=True)
+
     try:
-        weeks_resp = sb.table("sales_forecasts").select("week_start").execute()
-        fc_weeks = sorted(
-            {r['week_start'] for r in (weeks_resp.data or [])},
-            reverse=True,
-        )
+        fc_weeks = _get_forecast_weeks()
     except Exception:
         fc_weeks = []
 
@@ -4493,7 +4496,47 @@ elif page == "Tattle Insights":
     st.caption("Time-of-day patterns, category trends, and day-part analysis from guest feedback.")
 
     ref_data = _cached_reference_data()
-    reviews_df = _cached_tattle_reviews_light()
+
+    # Date range selector — default to last 6 months for performance
+    date_range = st.radio("Date Range", ["Last 3 Months", "Last 6 Months", "Last Year", "All Time"],
+                          index=1, horizontal=True, key="tattle_date_range")
+    if date_range == "Last 3 Months":
+        date_cutoff = str(date.today() - timedelta(days=90))
+    elif date_range == "Last 6 Months":
+        date_cutoff = str(date.today() - timedelta(days=180))
+    elif date_range == "Last Year":
+        date_cutoff = str(date.today() - timedelta(days=365))
+    else:
+        date_cutoff = None
+
+    # Load reviews with date filter applied at the query level
+    @st.cache_data(ttl=1800)
+    def _load_tattle_filtered(cutoff):
+        from supabase_db import get_supabase
+        sb = get_supabase()
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        fields = (
+            "id,location_id,location_label,score,cer,"
+            "experienced_time,completed_time,day_part_label,channel_label,"
+            "comment"
+        )
+        while True:
+            q = sb.table("tattle_reviews").select(fields).order("experienced_time", desc=True)
+            if cutoff:
+                q = q.gte("experienced_time", cutoff)
+            q = q.range(offset, offset + page_size - 1)
+            resp = q.execute()
+            if not resp.data:
+                break
+            all_rows.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            offset += page_size
+        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+
+    reviews_df = _load_tattle_filtered(date_cutoff)
 
     if reviews_df.empty:
         st.info("No Tattle review data available. Run the Tattle ingestion workflow first.")
