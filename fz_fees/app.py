@@ -2088,6 +2088,28 @@ elif page == "Store Revenue Bands":
 
                     cfg = cfg.sort_values("location_id").reset_index(drop=True)
 
+                    # Load 2-week average sales for each store
+                    _export_sales = {}
+                    try:
+                        from collections import defaultdict as _dd
+                        from supabase_db import get_supabase
+                        _exp_sb = get_supabase()
+                        _exp_2w_start = w - timedelta(weeks=2)
+                        _exp_actuals = _exp_sb.table("weekly_actuals").select(
+                            "location_id,week_start,net_sales"
+                        ).gte("week_start", str(_exp_2w_start)).lt(
+                            "week_start", str(w)
+                        ).execute().data or []
+                        _exp_wk = _dd(list)
+                        for _r in _exp_actuals:
+                            _v = float(_r.get("net_sales") or 0)
+                            if _v > 0:
+                                _exp_wk[_r["location_id"]].append(_v)
+                        for _sid, _vals in _exp_wk.items():
+                            _export_sales[_sid] = sum(_vals) / len(_vals) if _vals else None
+                    except Exception:
+                        pass
+
                     # Load most recent LOCKED week before this one to compare band changes
                     prev_bands = {}
                     search_w = w - timedelta(days=7)
@@ -2118,14 +2140,14 @@ elif page == "Store Revenue Bands":
                     RED_FILL = PatternFill("solid", fgColor="FFC7CE")
 
                     # Title row
-                    ws.merge_cells("A1:E1")
+                    ws.merge_cells("A1:F1")
                     title_cell = ws["A1"]
                     title_cell.value = f"Ram-Z Restaurant Group — Store Config: {label}"
                     title_cell.font = Font(name="Calibri", bold=True, color=NAVY, size=14)
                     title_cell.alignment = left
 
                     # Status row
-                    ws.merge_cells("A2:E2")
+                    ws.merge_cells("A2:F2")
                     status_cell = ws["A2"]
                     status_cell.value = f"Status: {status.upper()}"
                     status_cell.font = Font(name="Calibri", bold=True, color=GOLD, size=10)
@@ -2141,7 +2163,7 @@ elif page == "Store Revenue Bands":
                     ws["C3"].font = Font(name="Calibri", size=9)
 
                     # Headers
-                    headers = ["Store #", "Store Name", "Revenue Band", "Hourly Goal", "Change"]
+                    headers = ["Store #", "Store Name", "Revenue Band", "Hourly Goal", "2-Wk Avg Sales", "Change"]
                     for col_idx, h in enumerate(headers, 1):
                         cell = ws.cell(row=5, column=col_idx, value=h)
                         cell.font = header_font
@@ -2168,18 +2190,20 @@ elif page == "Store Revenue Bands":
                                 change_label = f"↓ {prev_band} → {curr_band}"
                                 row_fill = RED_FILL
 
+                        avg_sales = _export_sales.get(loc_id)
                         values = [
                             loc_id,
                             r.get("store_name", ""),
                             curr_band,
                             float(r.get("hourly_goal", 0)) if pd.notna(r.get("hourly_goal")) else 0,
+                            avg_sales if avg_sales else "",
                             change_label,
                         ]
                         for col_idx, val in enumerate(values, 1):
                             cell = ws.cell(row=row_idx, column=col_idx, value=val)
                             cell.font = data_font
                             cell.border = thin_border
-                            if col_idx in (1, 3, 4):
+                            if col_idx in (1, 3, 4, 5):
                                 cell.alignment = center
                             else:
                                 cell.alignment = left
@@ -2191,10 +2215,13 @@ elif page == "Store Revenue Bands":
                             # Format hourly goal as integer
                             if col_idx == 4:
                                 cell.number_format = "#,##0"
+                            # Format 2-wk avg sales as currency
+                            if col_idx == 5 and isinstance(val, (int, float)):
+                                cell.number_format = "$#,##0"
 
                     # Auto-fit column widths
                     from openpyxl.utils import get_column_letter
-                    for col_idx in range(1, 6):
+                    for col_idx in range(1, 7):
                         max_len = len(headers[col_idx - 1])
                         for row_idx in range(6, 6 + len(cfg)):
                             val = ws.cell(row=row_idx, column=col_idx).value
