@@ -129,49 +129,120 @@ def _cached_all_locks():
 def _cached_weekly_actuals():
     return load_weekly_actuals()
 
-@st.cache_data(ttl=300)
-def _cached_sos_data():
-    """Load all SoS weekly data. Paginates to get all rows."""
+def _paginate_table(table_name, fields="*", order_col="week_start"):
+    """Helper to paginate a Supabase table and return all rows."""
     from supabase_db import get_supabase
     sb = get_supabase()
+    all_rows = []
+    page_size = 1000
+    offset = 0
+    while True:
+        resp = sb.table(table_name).select(fields).order(
+            order_col, desc=True
+        ).range(offset, offset + page_size - 1).execute()
+        if not resp.data:
+            break
+        all_rows.extend(resp.data)
+        if len(resp.data) < page_size:
+            break
+        offset += page_size
+    return all_rows
+
+@st.cache_data(ttl=300)
+def _cached_sos_data():
+    """Load SoS data from both weekly uploads AND daily historical table, combined."""
     try:
-        all_rows = []
-        page_size = 1000
-        offset = 0
-        while True:
-            resp = sb.table("store_sos_weekly").select("*").order(
-                "week_start", desc=True
-            ).range(offset, offset + page_size - 1).execute()
-            if not resp.data:
-                break
-            all_rows.extend(resp.data)
-            if len(resp.data) < page_size:
-                break
-            offset += page_size
-        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+        # Weekly uploads (recent, has rank data)
+        weekly_rows = _paginate_table("store_sos_weekly")
+        weekly_df = pd.DataFrame(weekly_rows) if weekly_rows else pd.DataFrame()
+
+        # Daily historical (backfilled, no rank — aggregate to weekly)
+        daily_rows = _paginate_table("store_sos", fields="location_id,store_name,sale_date,good_shift", order_col="sale_date")
+        if daily_rows:
+            daily_df = pd.DataFrame(daily_rows)
+            daily_df["sale_date"] = pd.to_datetime(daily_df["sale_date"])
+            # Aggregate to weekly: Thu-anchored weeks
+            daily_df["week_start"] = (daily_df["sale_date"] - pd.to_timedelta(
+                (daily_df["sale_date"].dt.weekday - 3) % 7, unit="D"
+            )).dt.strftime("%Y-%m-%d")
+            daily_df["good_shift"] = pd.to_numeric(daily_df["good_shift"], errors="coerce")
+            hist_weekly = daily_df.groupby(["location_id", "week_start"]).agg(
+                good_shift=("good_shift", "mean"),
+            ).reset_index()
+            hist_weekly["good_shift"] = hist_weekly["good_shift"].round(2)
+            hist_weekly["good_shift_rank"] = None
+            hist_weekly["total_stores"] = None
+            hist_weekly["red_ticket"] = None
+            hist_weekly["shift_streak"] = None
+            hist_weekly["data_source"] = "historical"
+        else:
+            hist_weekly = pd.DataFrame()
+
+        # Combine: weekly uploads take priority over historical for overlapping weeks
+        if not weekly_df.empty:
+            weekly_df["data_source"] = "weekly_upload"
+        if not hist_weekly.empty and not weekly_df.empty:
+            # Remove historical weeks that overlap with weekly uploads
+            uploaded_keys = set(zip(weekly_df["location_id"], weekly_df["week_start"]))
+            hist_weekly = hist_weekly[~hist_weekly.apply(
+                lambda r: (r["location_id"], r["week_start"]) in uploaded_keys, axis=1
+            )]
+            combined = pd.concat([weekly_df, hist_weekly], ignore_index=True)
+        elif not weekly_df.empty:
+            combined = weekly_df
+        elif not hist_weekly.empty:
+            combined = hist_weekly
+        else:
+            combined = pd.DataFrame()
+
+        return combined
     except Exception:
         return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def _cached_votg_data():
-    """Load all VOTG weekly data. Paginates to get all rows."""
-    from supabase_db import get_supabase
-    sb = get_supabase()
+    """Load VOTG data from both weekly uploads AND monthly historical table, combined."""
     try:
-        all_rows = []
-        page_size = 1000
-        offset = 0
-        while True:
-            resp = sb.table("store_votg_weekly").select("*").order(
-                "week_start", desc=True
-            ).range(offset, offset + page_size - 1).execute()
-            if not resp.data:
-                break
-            all_rows.extend(resp.data)
-            if len(resp.data) < page_size:
-                break
-            offset += page_size
-        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+        # Weekly uploads (recent, has rank data)
+        weekly_rows = _paginate_table("store_votg_weekly")
+        weekly_df = pd.DataFrame(weekly_rows) if weekly_rows else pd.DataFrame()
+
+        # Monthly historical (backfilled, no rank)
+        monthly_rows = _paginate_table("store_votg",
+            fields="location_id,store_name,period_start,period_end,guests_per_negative",
+            order_col="period_start")
+        if monthly_rows:
+            monthly_df = pd.DataFrame(monthly_rows)
+            # Use period_start as week_start for compatibility
+            monthly_df["week_start"] = monthly_df["period_start"]
+            monthly_df["votg_rank"] = None
+            monthly_df["total_stores"] = None
+            monthly_df["total_negative_reviews"] = None
+            monthly_df["total_reviews"] = None
+            monthly_df["guests_per_negative"] = pd.to_numeric(
+                monthly_df["guests_per_negative"], errors="coerce"
+            )
+            monthly_df["data_source"] = "historical"
+        else:
+            monthly_df = pd.DataFrame()
+
+        # Combine: weekly uploads take priority
+        if not weekly_df.empty:
+            weekly_df["data_source"] = "weekly_upload"
+        if not monthly_df.empty and not weekly_df.empty:
+            uploaded_keys = set(zip(weekly_df["location_id"], weekly_df["week_start"]))
+            monthly_df = monthly_df[~monthly_df.apply(
+                lambda r: (r["location_id"], r["week_start"]) in uploaded_keys, axis=1
+            )]
+            combined = pd.concat([weekly_df, monthly_df], ignore_index=True)
+        elif not weekly_df.empty:
+            combined = weekly_df
+        elif not monthly_df.empty:
+            combined = monthly_df
+        else:
+            combined = pd.DataFrame()
+
+        return combined
     except Exception:
         return pd.DataFrame()
 
