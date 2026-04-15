@@ -5113,7 +5113,7 @@ elif page == "Sentiment Dashboard":
                 x=alt.X("month:N", title="Month", sort=None),
                 y=alt.Y("avg_score:Q",
                          title="Avg Score",
-                         axis=alt.Axis(titlePadding=15),
+                         axis=alt.Axis(titlePadding=40),
                          scale=alt.Scale(domain=[
                              max(0, monthly_stats["avg_score"].min() - 10),
                              100
