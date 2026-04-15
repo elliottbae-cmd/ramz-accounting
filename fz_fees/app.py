@@ -635,6 +635,25 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] > div {
     background: transparent !important;
 }
 
+/* Clean popover info button — no border, centered */
+button[data-testid="stPopoverButton"] {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+button[data-testid="stPopoverButton"]:hover {
+    opacity: 1.0;
+    background: transparent !important;
+    border: none !important;
+}
+
 /* Sidebar header — gold accent */
 section[data-testid="stSidebar"] h2 {
     font-size: 1rem;
@@ -1882,13 +1901,13 @@ elif page == "Store Revenue Bands":
             store_name = row["store_name"]
             current_band = row["revenue_band"] if pd.notna(row["revenue_band"]) else "<25k"
 
-            cols = st.columns([2, 2.5, 0.5] + [2] * 5)
+            cols = st.columns([2, 2.5, 0.4] + [2] * 5)
             with cols[0]:
                 st.text(store_id)
             with cols[1]:
                 st.text(store_name)
             with cols[2]:
-                with st.popover("ⓘ", use_container_width=True):
+                with st.popover("ℹ️"):
                     sub        = _submissions.get(store_id, {})
                     status_val = sub.get("status", "")
                     # GM status
@@ -1963,7 +1982,7 @@ elif page == "Store Revenue Bands":
         st.divider()
 
         # Save buttons — one per unlocked week
-        save_cols = st.columns([2, 2.5, 0.5] + [2] * 5)
+        save_cols = st.columns([2, 2.5, 0.4] + [2] * 5)
         with save_cols[0]:
             st.write("")  # spacer
         with save_cols[1]:
