@@ -5188,7 +5188,11 @@ elif page == "Sentiment Dashboard":
 
     # --- Theme Frequency ---
     st.subheader("🔍 Most Common Themes — Negative vs Positive")
-    st.caption("Side-by-side comparison of what guests complain about vs. what they praise.")
+    st.caption(
+        "Side-by-side comparison of what guests complain about vs. what they praise. "
+        "**Note:** A single review can mention multiple themes, so the sum of category "
+        "bars exceeds the total review count."
+    )
 
     # Split scored reviews into negative (score < 70) and positive (score >= 70)
     scored["_score_num"] = pd.to_numeric(scored["score"], errors="coerce")
