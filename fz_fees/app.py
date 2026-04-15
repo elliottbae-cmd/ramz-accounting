@@ -5428,7 +5428,7 @@ elif page == "Sentiment Dashboard":
                 strokeDash=[6, 3], strokeWidth=2, color="#D32F2F"
             ).encode(
                 x=alt.X("month:N", sort=None),
-                y=alt.Y("neg_trend:Q", scale=neg_y_scale),
+                y=alt.Y("neg_trend:Q", scale=neg_y_scale, title=None, axis=None),
             )
 
             combined = alt.layer(neg_bars, neg_trend, score_line).resolve_scale(
