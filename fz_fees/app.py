@@ -2243,6 +2243,265 @@ elif page == "Store Revenue Bands":
                     key="rev_band_download",
                 )
 
+    # --- Email to Team ---
+    st.divider()
+    st.subheader("Email to Team")
+    st.caption("Send the weekly revenue band and hourly goal update to GMs and DMs via email.")
+
+    email_week_options = []
+    for w, label, status in zip(weeks, week_labels, week_statuses):
+        if status in ("locked", "draft"):
+            email_week_options.append((w, label, status))
+
+    if not email_week_options:
+        st.info("No locked or drafted weeks available to email.")
+    else:
+        email_choices = [f"{label} ({status})" for _, label, status in email_week_options]
+        email_selected = st.selectbox(
+            "Select week to email",
+            email_choices,
+            key="rev_band_email_week",
+        )
+
+        if st.button("📧 Email to Team", type="primary", use_container_width=True, key="rev_band_email_btn"):
+            idx = email_choices.index(email_selected)
+            ew, elabel, estatus = email_week_options[idx]
+
+            # Load config for selected week
+            if estatus == "locked":
+                ecfg = load_locked_config(ew)
+            elif estatus == "draft":
+                ecfg = load_draft_config(ew)
+            else:
+                ecfg = None
+
+            if ecfg is None or (hasattr(ecfg, 'empty') and ecfg.empty):
+                ref_data = _cached_reference_data()
+                current_goals = _cached_band_goals()
+                ecfg = ref_data.copy()
+                ecfg["hourly_goal"] = ecfg["revenue_band"].map(current_goals).fillna(0)
+
+            # Load previous week for comparison
+            prev_bands = {}
+            search_w = ew - timedelta(days=7)
+            for _ in range(12):
+                if lock_exists(search_w):
+                    prev_cfg = load_locked_config(search_w)
+                    if prev_cfg is not None and not prev_cfg.empty:
+                        prev_bands = dict(zip(prev_cfg["location_id"], prev_cfg["revenue_band"]))
+                    break
+                search_w -= timedelta(days=7)
+
+            BAND_ORDER = [
+                "<25k", "25k-30k", "30k-35k", "35k-40k",
+                "40k-45k", "45k-50k", "50k+", "NRO", "NRO Seasoned"
+            ]
+            def _band_rank(b):
+                try:
+                    return BAND_ORDER.index(b)
+                except ValueError:
+                    return -1
+
+            # Load 2-week avg sales
+            _email_sales = {}
+            try:
+                from collections import defaultdict as _edd
+                from supabase_db import get_supabase
+                _esb = get_supabase()
+                _e2w = ew - timedelta(weeks=2)
+                _eact = _esb.table("weekly_actuals").select(
+                    "location_id,week_start,net_sales"
+                ).gte("week_start", str(_e2w)).lt("week_start", str(ew)).execute().data or []
+                _ewk = _edd(list)
+                for _r in _eact:
+                    _v = float(_r.get("net_sales") or 0)
+                    if _v > 0:
+                        _ewk[_r["location_id"]].append(_v)
+                for _sid, _vals in _ewk.items():
+                    _email_sales[_sid] = sum(_vals) / len(_vals) if _vals else None
+            except Exception:
+                pass
+
+            # Load GM and DM contacts
+            try:
+                _esb2 = get_supabase()
+                gm_resp = _esb2.table("gm_contacts").select("*").execute()
+                gm_contacts = {r["location_id"]: r for r in (gm_resp.data or [])}
+                dm_resp = _esb2.table("dm_list").select("dm_name,email").execute()
+                dm_emails = {r["dm_name"]: r.get("email", "") for r in (dm_resp.data or [])}
+            except Exception:
+                gm_contacts = {}
+                dm_emails = {}
+
+            # Build HTML email body
+            ecfg = ecfg.sort_values("location_id").reset_index(drop=True)
+
+            # Group by DM
+            dm_groups = {}
+            for _, r in ecfg.iterrows():
+                dm = r.get("dm", "Unassigned")
+                if dm not in dm_groups:
+                    dm_groups[dm] = []
+                loc_id = r.get("location_id", "")
+                curr_band = r.get("revenue_band", "")
+                prev_band = prev_bands.get(loc_id)
+                change = ""
+                bg_color = "#FFFFFF"
+                if prev_band and prev_band != curr_band:
+                    if _band_rank(curr_band) > _band_rank(prev_band):
+                        change = f"↑ {prev_band} → {curr_band}"
+                        bg_color = "#C6EFCE"
+                    elif _band_rank(curr_band) < _band_rank(prev_band):
+                        change = f"↓ {prev_band} → {curr_band}"
+                        bg_color = "#FFC7CE"
+                avg_sales = _email_sales.get(loc_id)
+                dm_groups[dm].append({
+                    "loc_id": loc_id,
+                    "store": r.get("store_name", ""),
+                    "band": curr_band,
+                    "goal": int(float(r.get("hourly_goal", 0))),
+                    "avg_sales": f"${avg_sales:,.0f}" if avg_sales else "—",
+                    "change": change,
+                    "bg": bg_color,
+                })
+
+            # Build full HTML
+            html = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto;">
+                <div style="background: #2B3A4E; padding: 20px; text-align: center;">
+                    <h1 style="color: #C49A5C; margin: 0;">Ram-Z Restaurant Group</h1>
+                    <p style="color: #FFFFFF; margin: 5px 0 0;">Weekly Revenue Band & Hourly Goal Update</p>
+                </div>
+                <div style="padding: 20px;">
+                    <p style="font-size: 14px; color: #333;">
+                        <strong>Week:</strong> {elabel}<br>
+                        <strong>Status:</strong> {estatus.upper()}
+                    </p>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                        <tr style="background: #2B3A4E; color: white;">
+                            <th style="padding: 8px; text-align: left;">Store</th>
+                            <th style="padding: 8px; text-align: center;">Rev Band</th>
+                            <th style="padding: 8px; text-align: center;">Hourly Goal</th>
+                            <th style="padding: 8px; text-align: center;">2-Wk Avg Sales</th>
+                            <th style="padding: 8px; text-align: center;">Change</th>
+                        </tr>
+            """
+
+            for dm_name in sorted(dm_groups.keys()):
+                stores = dm_groups[dm_name]
+                html += f"""
+                    <tr style="background: #F5F0EB;">
+                        <td colspan="5" style="padding: 8px; font-weight: bold; color: #2B3A4E;">
+                            {dm_name}
+                        </td>
+                    </tr>
+                """
+                for s in stores:
+                    html += f"""
+                        <tr style="background: {s['bg']};">
+                            <td style="padding: 6px 8px; border-bottom: 1px solid #eee;">{s['store']}</td>
+                            <td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #eee;">{s['band']}</td>
+                            <td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #eee;">{s['goal']}</td>
+                            <td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #eee;">{s['avg_sales']}</td>
+                            <td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #eee;">{s['change']}</td>
+                        </tr>
+                    """
+
+            html += """
+                    </table>
+                    <p style="font-size: 12px; color: #999; margin-top: 20px;">
+                        <span style="background: #C6EFCE; padding: 2px 8px;">Green</span> = Band Increased &nbsp;
+                        <span style="background: #FFC7CE; padding: 2px 8px;">Red</span> = Band Decreased
+                    </p>
+                </div>
+                <div style="background: #2B3A4E; padding: 10px; text-align: center;">
+                    <p style="color: #C49A5C; font-size: 11px; margin: 0;">Ram-Z Restaurant Group — Confidential</p>
+                </div>
+            </div>
+            """
+
+            subject = f"Ram-Z Weekly Rev Band Update — {elabel}"
+
+            # Collect all recipients
+            recipients = []
+            missing_emails = []
+
+            # DM emails
+            for dm_name in dm_groups.keys():
+                dm_email = dm_emails.get(dm_name, "")
+                if dm_email:
+                    recipients.append(dm_email)
+                else:
+                    missing_emails.append(f"DM: {dm_name}")
+
+            # GM emails
+            for _, r in ecfg.iterrows():
+                loc_id = r.get("location_id", "")
+                gm = gm_contacts.get(loc_id, {})
+                gm_email = gm.get("email", "")
+                if gm_email:
+                    recipients.append(gm_email)
+                else:
+                    missing_emails.append(f"GM: {r.get('store_name', loc_id)}")
+
+            # CEO email (from app_settings)
+            try:
+                from supabase_db import load_app_settings
+                _email_settings = load_app_settings()
+                ceo_email = _email_settings.get("ceo_email", "").strip()
+                if ceo_email:
+                    recipients.append(ceo_email)
+            except Exception:
+                pass
+
+            recipients = list(set(recipients))  # dedupe
+
+            if missing_emails:
+                with st.expander(f"⚠️ {len(missing_emails)} missing email addresses"):
+                    for m in missing_emails:
+                        st.markdown(f"- {m}")
+
+            if not recipients:
+                st.error("No email addresses found. Please load GM and DM emails first.")
+            else:
+                st.info(f"Ready to send to **{len(recipients)} recipients**.")
+
+                if st.button("✅ Confirm & Send", key="rev_band_confirm_send"):
+                    from email_service import send_email
+                    sent = 0
+                    failed = 0
+                    for addr in recipients:
+                        try:
+                            result = send_email(addr, subject, html)
+                            if result:
+                                sent += 1
+                            else:
+                                failed += 1
+                        except Exception as e:
+                            st.warning(f"Failed to send to {addr}: {e}")
+                            failed += 1
+
+                    if sent > 0:
+                        st.success(f"✅ Email sent to {sent} recipients!")
+                    if failed > 0:
+                        st.warning(f"⚠️ {failed} emails failed to send.")
+
+                    # Log to Supabase
+                    try:
+                        _esb3 = get_supabase()
+                        from datetime import datetime, timezone
+                        _esb3.table("email_log").insert({
+                            "email_type": "rev_band_update",
+                            "week_start": str(ew),
+                            "recipients": len(recipients),
+                            "sent": sent,
+                            "failed": failed,
+                            "sent_by": current_user or "admin",
+                            "sent_at": datetime.now(timezone.utc).isoformat(),
+                        }).execute()
+                    except Exception:
+                        pass
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: DM Assignments
