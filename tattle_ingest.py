@@ -401,6 +401,18 @@ def ingest(start_date, end_date, mode="weekly"):
         for survey in ram_z_surveys:
             update_rows.append({
                 "id":                  survey["id"],
+                # Core fields (needed if row doesn't exist yet)
+                "location_id":         survey.get("locationExternalId", ""),
+                "location_label":      survey.get("locationLabel", ""),
+                "score":               survey.get("score"),
+                "cer":                 survey.get("cer"),
+                "completed_time":      survey.get("completedTime"),
+                "experienced_time":    survey.get("experiencedTime"),
+                "day_part_label":      survey.get("dayPartLabel", ""),
+                "channel_label":       survey.get("channelLabel", ""),
+                "questionnaire_id":    survey.get("questionnaireId"),
+                "questionnaire_title": survey.get("questionnaireTitle", ""),
+                # New customer & engagement fields
                 "customer_email":      survey.get("customerEmail"),
                 "share_email":         survey.get("shareEmail"),
                 "customer_id":         survey.get("customerId"),

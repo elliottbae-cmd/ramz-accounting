@@ -5111,7 +5111,9 @@ elif page == "Sentiment Dashboard":
                 point=True, strokeWidth=3, color="#2B3A4E"
             ).encode(
                 x=alt.X("month:N", title="Month", sort=None),
-                y=alt.Y("avg_score:Q", title="Avg Score",
+                y=alt.Y("avg_score:Q",
+                         title="Avg Score",
+                         axis=alt.Axis(titlePadding=15),
                          scale=alt.Scale(domain=[
                              max(0, monthly_stats["avg_score"].min() - 10),
                              100
