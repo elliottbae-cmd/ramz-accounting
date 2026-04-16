@@ -1,0 +1,38 @@
+name: Test GM Revenue Band Email
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_email:
+        description: "Email address to send the test to"
+        required: true
+        default: "elliottbae@gmail.com"
+      test_store_id:
+        description: "Store ID to simulate (e.g. 112-0001)"
+        required: false
+        default: "112-0001"
+
+jobs:
+  send-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install sendgrid supabase streamlit
+
+      - name: Send test email
+        env:
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
+          SENDGRID_API_KEY:    ${{ secrets.SENDGRID_API_KEY }}
+          SENDGRID_FROM_EMAIL: ${{ secrets.SENDGRID_FROM_EMAIL }}
+          TEST_EMAIL:          ${{ github.event.inputs.test_email }}
+          TEST_STORE_ID:       ${{ github.event.inputs.test_store_id }}
+        run: python test_gm_email.py
