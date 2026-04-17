@@ -4713,9 +4713,9 @@ elif page == "SoS/VOTG Trends":
             votg_portfolio["avg_rank"] = votg_portfolio["avg_rank"].round(1)
             votg_portfolio["total_neg"] = votg_portfolio["total_neg"].fillna(0).astype(int)
 
-            # Bars for total negative reviews (left axis)
-            votg_neg_bars = alt.Chart(votg_portfolio).mark_bar(
-                opacity=0.35, color="#FFC7CE"
+            # Line for total negative reviews (left axis)
+            votg_neg_bars = alt.Chart(votg_portfolio).mark_line(
+                point=True, strokeWidth=2, color="#D32F2F"
             ).encode(
                 x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
                 y=alt.Y("total_neg:Q", title="Total Negative Reviews"),
@@ -4743,7 +4743,7 @@ elif page == "SoS/VOTG Trends":
             ).properties(height=350).interactive()
             st.altair_chart(votg_avg_chart, use_container_width=True)
             st.caption(
-                "**Pink bars** = Total Negative Reviews per week (left axis) · "
+                "**Red line** = Total Negative Reviews per week (left axis) · "
                 "**Dark line** = Avg VOTG Rank (right axis, lower = better)"
             )
 
