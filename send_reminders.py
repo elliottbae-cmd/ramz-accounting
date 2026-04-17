@@ -324,7 +324,7 @@ def log_email(week_start, location_id, to_email, subject, email_type, success,
         sb.table("email_log").insert({
             "week_start":     str(week_start),
             "location_id":    location_id,
-            "to_email":       to_email,
+            "recipient_email": to_email,
             "recipient_type": recipient_type,
             "subject":        subject,
             "email_type":     email_type,

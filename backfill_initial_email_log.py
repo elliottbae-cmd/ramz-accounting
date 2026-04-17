@@ -78,15 +78,15 @@ for loc_id, gm in gm_contacts.items():
 
     try:
         sb.table("email_log").insert({
-            "week_start":     str(target_week),
-            "location_id":    loc_id,
-            "to_email":       email,
-            "recipient_type": "gm",
-            "subject":        subject,
-            "email_type":     "initial",
-            "success":        True,
-            "error_msg":      "",
-            "sent_at":        datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "week_start":      str(target_week),
+            "location_id":     loc_id,
+            "recipient_email": email,
+            "recipient_type":  "gm",
+            "subject":         subject,
+            "email_type":      "initial",
+            "success":         True,
+            "error_msg":       "",
+            "sent_at":         datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }).execute()
         inserted += 1
         print(f"  ✓ Logged {store_name} ({loc_id}) → {email}")
