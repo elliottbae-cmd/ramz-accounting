@@ -4704,28 +4704,48 @@ elif page == "SoS/VOTG Trends":
 
             import altair as alt
 
-            # Portfolio average rank by week
+            # Portfolio average rank + total negative reviews by week
             votg_portfolio = votg.groupby("week_start").agg(
                 avg_rank=("votg_rank", "mean"),
-                avg_neg=("total_negative_reviews", "mean"),
+                total_neg=("total_negative_reviews", "sum"),
                 stores=("location_id", "nunique"),
             ).reset_index()
             votg_portfolio["avg_rank"] = votg_portfolio["avg_rank"].round(1)
-            votg_portfolio["avg_neg"] = votg_portfolio["avg_neg"].round(1)
+            votg_portfolio["total_neg"] = votg_portfolio["total_neg"].fillna(0).astype(int)
 
-            votg_avg_chart = alt.Chart(votg_portfolio).mark_line(
-                point=True, strokeWidth=3, color="#2B3A4E"
+            # Bars for total negative reviews (left axis)
+            votg_neg_bars = alt.Chart(votg_portfolio).mark_bar(
+                opacity=0.35, color="#FFC7CE"
             ).encode(
                 x=alt.X("week_start:T", title="Week", axis=alt.Axis(format="%m/%d")),
-                y=alt.Y("avg_rank:Q", title="Avg Rank",
+                y=alt.Y("total_neg:Q", title="Total Negative Reviews"),
+                tooltip=[alt.Tooltip("week_start:T", title="Week"),
+                         alt.Tooltip("total_neg:Q", title="Total Negative Reviews")]
+            )
+
+            # Line for avg rank (right axis)
+            votg_rank_line = alt.Chart(votg_portfolio).mark_line(
+                point=True, strokeWidth=3, color="#2B3A4E"
+            ).encode(
+                x=alt.X("week_start:T", axis=alt.Axis(format="%m/%d")),
+                y=alt.Y("avg_rank:Q",
+                        title="Avg Rank",
+                        axis=alt.Axis(titlePadding=40),
                         scale=alt.Scale(zero=False)),
                 tooltip=[alt.Tooltip("week_start:T", title="Week"),
                          alt.Tooltip("avg_rank:Q", title="Avg Rank", format=".1f"),
-                         alt.Tooltip("avg_neg:Q", title="Avg Neg Reviews", format=".1f"),
+                         alt.Tooltip("total_neg:Q", title="Total Negative Reviews"),
                          alt.Tooltip("stores:Q", title="Stores")]
+            )
+
+            votg_avg_chart = alt.layer(votg_neg_bars, votg_rank_line).resolve_scale(
+                y="independent"
             ).properties(height=350).interactive()
             st.altair_chart(votg_avg_chart, use_container_width=True)
-            st.caption("Portfolio average VOTG rank. Line going up = rank number increasing (getting worse). Line going down = improving.")
+            st.caption(
+                "**Pink bars** = Total Negative Reviews per week (left axis) · "
+                "**Dark line** = Avg VOTG Rank (right axis, lower = better)"
+            )
 
             # Identify stores on a negative trend
             st.markdown("**⚠️ Stores Trending Negative** (rank getting worse over recent weeks)")
