@@ -163,8 +163,10 @@ def get_email_mode():
     current_hour = _current_ct_hour()
 
     if delta == 0:
-        # Initial day — one send at 1:00 PM CT (hardcoded so ops data is ready)
-        allowed = {13}
+        # Initial day — target 1:00 PM CT, with 1-hour grace window (13-14)
+        # for GitHub Actions runner delays. Dedup in log_email() prevents
+        # double-sends if both hours fire within the same day.
+        allowed = {13, 14}
         mode    = "initial"
     elif delta == 1:
         allowed = {r1, r2, r3}
@@ -176,6 +178,11 @@ def get_email_mode():
     if current_hour not in allowed:
         print(f"Current CT hour ({current_hour}) not in send hours {sorted(allowed)}. Skipping.")
         return None
+
+    # Escalation visibility — warn if CEO_EMAIL is missing on Wednesday final notice
+    if mode == "wednesday" and not CEO_EMAIL:
+        print("  \u26a0 WARNING: CEO_EMAIL env var not set \u2014 Wednesday final notice "
+              "will NOT escalate to the CEO. Set CEO_EMAIL in GitHub Secrets.")
 
     return mode
 
@@ -319,18 +326,35 @@ def load_store_performance(location_id, target_week):
 
 def log_email(week_start, location_id, to_email, subject, email_type, success,
               error_msg="", recipient_type="gm"):
-    """Write an email log entry to Supabase. Never raises."""
+    """Write an email log entry to Supabase. Deduplicates on (week_start,
+    location_id, recipient_email, email_type) to prevent double-logs from
+    retried or overlapping workflow runs."""
+    # Input validation
+    if not to_email or not recipient_type or not location_id:
+        print(f"  \u26a0 log_email skipped — missing required fields "
+              f"(to_email={bool(to_email)}, type={recipient_type}, loc={location_id})")
+        return
     try:
+        # Dedup: skip if an identical entry already exists for this week/store/recipient/type
+        existing = sb.table("email_log").select("id").eq(
+            "week_start", str(week_start)
+        ).eq("location_id", location_id).eq(
+            "recipient_email", to_email
+        ).eq("email_type", email_type).limit(1).execute()
+        if existing.data:
+            # Already logged — no-op
+            return
+
         sb.table("email_log").insert({
-            "week_start":     str(week_start),
-            "location_id":    location_id,
+            "week_start":      str(week_start),
+            "location_id":     location_id,
             "recipient_email": to_email,
-            "recipient_type": recipient_type,
-            "subject":        subject,
-            "email_type":     email_type,
-            "success":        success,
-            "error_msg":      error_msg,
-            "sent_at":        datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "recipient_type":  recipient_type,
+            "subject":         subject,
+            "email_type":      email_type,
+            "success":         success,
+            "error_msg":       error_msg,
+            "sent_at":         datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }).execute()
     except Exception as e:
         print(f"  \u26a0 Could not write email log: {e}")
@@ -814,6 +838,10 @@ def main():
         sent_count   = 0
         failed_count = 0
         skipped      = 0
+        # Sentiment synthesis observability counters
+        sentiment_failures      = 0   # Claude API errored
+        sentiment_missing_data  = 0   # No Tattle reviews for the store/week
+        sentiment_no_api_key    = False
 
         for store in pending_stores:
             loc_id     = store["location_id"]
@@ -835,22 +863,33 @@ def main():
 
             # Ensure a submission record exists in rev_band_submissions so the
             # portal can look up the token and identify the store + week.
-            # Check by (location_id, week_start) — the real business key.
+            # Upsert on (location_id, week_start) — prevents race conditions if
+            # the workflow runs twice (retry, manual dispatch + schedule overlap).
             if token:
                 try:
                     existing = sb.table("rev_band_submissions").select("id,token").eq(
                         "location_id", loc_id
                     ).eq("week_start", str(target_week)).execute()
                     if existing.data:
-                        # Reuse the existing token so the email link matches
+                        # Row already exists — reuse its token so the email link matches
                         token = existing.data[0].get("token") or token
                     else:
-                        sb.table("rev_band_submissions").insert({
-                            "location_id": loc_id,
-                            "week_start":  str(target_week),
-                            "token":       token,
-                            "status":      "pending_gm",
-                        }).execute()
+                        # Use upsert with on_conflict to atomically insert-or-skip.
+                        # If another parallel run inserted first, this becomes a no-op.
+                        try:
+                            sb.table("rev_band_submissions").upsert({
+                                "location_id": loc_id,
+                                "week_start":  str(target_week),
+                                "token":       token,
+                                "status":      "pending_gm",
+                            }, on_conflict="location_id,week_start").execute()
+                        except Exception:
+                            # Fallback: re-query to get whatever token got inserted
+                            retry = sb.table("rev_band_submissions").select("token").eq(
+                                "location_id", loc_id
+                            ).eq("week_start", str(target_week)).execute()
+                            if retry.data and retry.data[0].get("token"):
+                                token = retry.data[0]["token"]
                 except Exception as e:
                     print(f"  \u26a0 Could not create submission record for {store_name}: {e}")
 
@@ -862,7 +901,14 @@ def main():
                 reviews = fetch_weekly_store_reviews(loc_id, target_week)
                 if reviews:
                     pos, neg = synthesize_weekly_sentiment(store_name, reviews, week_label)
-                    sentiment = {"positive": pos, "negative": neg}
+                    if pos is None and neg is None:
+                        sentiment_failures += 1
+                    else:
+                        sentiment = {"positive": pos, "negative": neg}
+                else:
+                    sentiment_missing_data += 1
+            else:
+                sentiment_no_api_key = True
 
             html_body  = build_email_html(store_name, gm_name, week_label, portal_url, mode,
                                           perf, sentiment)
@@ -892,6 +938,28 @@ def main():
                 failed_count += 1
 
         print(f"\nDone. {sent_count} sent | {failed_count} failed | {skipped} skipped (no email on file).")
+
+        # Visibility alerts — these help ops catch data-quality problems
+        total_attempted = sent_count + failed_count + skipped
+        if total_attempted > 0:
+            skipped_pct = skipped / total_attempted * 100
+            if skipped_pct >= 50:
+                print(f"\n\u26a0\ufe0f  CRITICAL: {skipped_pct:.0f}% of stores skipped \u2014 "
+                      f"most GM emails are missing! Load GM contacts immediately.")
+            elif skipped_pct >= 10:
+                print(f"\n\u26a0\ufe0f  WARNING: {skipped_pct:.0f}% of stores skipped "
+                      f"(missing GM emails). Consider loading missing contacts.")
+
+        # Sentiment synthesis observability
+        if sentiment_no_api_key:
+            print("\n\u26a0\ufe0f  ANTHROPIC_KEY not set \u2014 no emails include sentiment summaries.")
+        if sentiment_failures > 0:
+            print(f"\n\u26a0\ufe0f  Sentiment synthesis failed for {sentiment_failures} store(s) "
+                  f"(Claude API error). Emails were sent without sentiment.")
+        if sentiment_missing_data > 0:
+            print(f"\n\u2139\ufe0f  Sentiment skipped for {sentiment_missing_data} store(s) "
+                  f"(no Tattle reviews for the week \u2014 expected for low-volume stores).")
+
         if failed_count > 0:
             sys.exit(1)
 

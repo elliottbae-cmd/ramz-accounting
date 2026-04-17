@@ -2487,39 +2487,84 @@ elif page == "Store Revenue Bands":
 
                 if st.button("✅ Confirm & Send", key="rev_band_confirm_send"):
                     from email_service import send_email
+                    from datetime import datetime, timezone
+                    _esb3 = get_supabase()
+
                     sent = 0
                     failed = 0
+                    log_rows = []
+                    now_iso = datetime.now(timezone.utc).isoformat()
+
+                    # Build reverse lookup: email address → (location_id, recipient_type)
+                    # DMs get a sentinel location_id since they cover multiple stores
+                    addr_info = {}
+                    for dm_name in dm_groups.keys():
+                        em = dm_emails.get(dm_name, "")
+                        if em and em not in addr_info:
+                            addr_info[em] = ("DM-" + dm_name[:20], "dm")
+                    for _, r in ecfg.iterrows():
+                        lid = r.get("location_id", "")
+                        gm = gm_contacts.get(lid, {})
+                        em = gm.get("email", "")
+                        if em and em not in addr_info:
+                            addr_info[em] = (lid, "gm")
+                    # CEO
+                    try:
+                        from supabase_db import load_app_settings
+                        _settings = load_app_settings()
+                        ceo = _settings.get("ceo_email", "").strip()
+                        if ceo and ceo not in addr_info:
+                            addr_info[ceo] = ("CEO", "ceo")
+                    except Exception:
+                        pass
+
                     for addr in recipients:
+                        loc_id, rcp_type = addr_info.get(addr, ("UNKNOWN", "other"))
+                        error_msg = ""
+                        success = False
                         try:
                             result = send_email(addr, subject, html)
-                            if result:
+                            # send_email returns a dict with "success" key
+                            if isinstance(result, dict):
+                                success = bool(result.get("success", False))
+                                if not success:
+                                    error_msg = str(result.get("message", "unknown error"))
+                            else:
+                                # Legacy boolean return
+                                success = bool(result)
+                            if success:
                                 sent += 1
                             else:
                                 failed += 1
+                                st.warning(f"Failed to send to {addr}: {error_msg or 'send returned failure'}")
                         except Exception as e:
-                            st.warning(f"Failed to send to {addr}: {e}")
+                            error_msg = str(e)
                             failed += 1
+                            st.warning(f"Failed to send to {addr}: {e}")
+
+                        log_rows.append({
+                            "week_start":      str(ew),
+                            "location_id":     loc_id,
+                            "recipient_email": addr,
+                            "recipient_type":  rcp_type,
+                            "subject":         subject,
+                            "email_type":      "rev_band_update",
+                            "success":         success,
+                            "error_msg":       error_msg,
+                            "sent_at":         now_iso,
+                        })
 
                     if sent > 0:
                         st.success(f"✅ Email sent to {sent} recipients!")
                     if failed > 0:
                         st.warning(f"⚠️ {failed} emails failed to send.")
 
-                    # Log to Supabase
-                    try:
-                        _esb3 = get_supabase()
-                        from datetime import datetime, timezone
-                        _esb3.table("email_log").insert({
-                            "email_type": "rev_band_update",
-                            "week_start": str(ew),
-                            "recipients": len(recipients),
-                            "sent": sent,
-                            "failed": failed,
-                            "sent_by": current_user or "admin",
-                            "sent_at": datetime.now(timezone.utc).isoformat(),
-                        }).execute()
-                    except Exception:
-                        pass
+                    # Write per-recipient log entries
+                    if log_rows:
+                        try:
+                            _esb3.table("email_log").insert(log_rows).execute()
+                        except Exception as log_e:
+                            st.warning(f"Emails sent but log insert failed: {log_e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
