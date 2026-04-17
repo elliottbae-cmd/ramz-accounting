@@ -831,12 +831,16 @@ def main():
 
             # Ensure a submission record exists in rev_band_submissions so the
             # portal can look up the token and identify the store + week.
+            # Check by (location_id, week_start) — the real business key.
             if token:
                 try:
-                    existing = sb.table("rev_band_submissions").select("id").eq(
-                        "token", token
+                    existing = sb.table("rev_band_submissions").select("id,token").eq(
+                        "location_id", loc_id
                     ).eq("week_start", str(target_week)).execute()
-                    if not existing.data:
+                    if existing.data:
+                        # Reuse the existing token so the email link matches
+                        token = existing.data[0].get("token") or token
+                    else:
                         sb.table("rev_band_submissions").insert({
                             "location_id": loc_id,
                             "week_start":  str(target_week),
