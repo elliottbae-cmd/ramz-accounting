@@ -317,18 +317,20 @@ def load_store_performance(location_id, target_week):
     )
 
 
-def log_email(week_start, location_id, to_email, subject, email_type, success, error_msg=""):
+def log_email(week_start, location_id, to_email, subject, email_type, success,
+              error_msg="", recipient_type="gm"):
     """Write an email log entry to Supabase. Never raises."""
     try:
         sb.table("email_log").insert({
-            "week_start":    str(week_start),
-            "location_id":   location_id,
-            "to_email":      to_email,
-            "subject":       subject,
-            "email_type":    email_type,
-            "success":       success,
-            "error_msg":     error_msg,
-            "sent_at":       datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "week_start":     str(week_start),
+            "location_id":    location_id,
+            "to_email":       to_email,
+            "recipient_type": recipient_type,
+            "subject":        subject,
+            "email_type":     email_type,
+            "success":        success,
+            "error_msg":      error_msg,
+            "sent_at":        datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }).execute()
     except Exception as e:
         print(f"  \u26a0 Could not write email log: {e}")
@@ -759,7 +761,8 @@ def send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
             print(f"  {status} {dm_name} \u2192 {dm_email} ({len(stores)} store(s))")
             loc_id_for_log = stores[0]["location_id"]
             log_email(target_week, loc_id_for_log, dm_email, subject,
-                      f"dm_reminder_{day_label.lower()}", success)
+                      f"dm_reminder_{day_label.lower()}", success,
+                      recipient_type="dm")
             if success:
                 sent += 1
             else:
@@ -767,7 +770,8 @@ def send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
         except Exception as e:
             print(f"  ERROR  {dm_name} \u2192 {dm_email} | {e}")
             log_email(target_week, stores[0]["location_id"], dm_email, subject,
-                      f"dm_reminder_{day_label.lower()}", False, str(e))
+                      f"dm_reminder_{day_label.lower()}", False, str(e),
+                      recipient_type="dm")
             failed += 1
 
     print(f"DM Reminders done. {sent} sent | {failed} failed")
