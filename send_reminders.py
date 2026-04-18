@@ -933,14 +933,16 @@ def main():
                 cc_note = f" (cc: {', '.join(cc_emails)})" if cc_emails else ""
                 status  = "\u2713 Sent  " if success else "\u2717 Failed"
                 print(f"  {status} {store_name} \u2192 {gm_email}{cc_note}")
-                log_email(target_week, loc_id, gm_email, subject, f"gm_{mode}", success)
+                log_email(target_week, loc_id, gm_email, subject, mode, success,
+                          recipient_type="gm")
                 if success:
                     sent_count += 1
                 else:
                     failed_count += 1
             except Exception as e:
                 print(f"  ERROR  {store_name} \u2192 {gm_email} | {e}")
-                log_email(target_week, loc_id, gm_email, subject, f"gm_{mode}", False, str(e))
+                log_email(target_week, loc_id, gm_email, subject, mode, False, str(e),
+                          recipient_type="gm")
                 failed_count += 1
 
         print(f"\nDone. {sent_count} sent | {failed_count} failed | {skipped} skipped (no email on file).")
