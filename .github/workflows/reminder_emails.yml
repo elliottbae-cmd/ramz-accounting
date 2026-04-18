@@ -37,7 +37,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install supabase sendgrid
+        run: pip install supabase sendgrid requests
 
       - name: Send emails
         env:
@@ -45,6 +45,8 @@ jobs:
           SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
           SENDGRID_API_KEY:    ${{ secrets.SENDGRID_API_KEY }}
           SENDGRID_FROM_EMAIL: ${{ secrets.SENDGRID_FROM_EMAIL }}
+          # Anthropic Claude API — used for weekly sentiment synthesis in GM emails
+          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
           # GM_PORTAL_URL falls back to the default hardcoded in send_reminders.py
           # Set this secret in GitHub if you ever need to override it.
           CEO_EMAIL:           ${{ secrets.CEO_EMAIL }}
