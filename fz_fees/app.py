@@ -223,25 +223,26 @@ def _cached_tattle_with_snapshots():
         return pd.DataFrame()
 
 @st.cache_data(ttl=1800)
-def _cached_tattle_scored():
+def _cached_tattle_scored(cutoff_date=None):
     """Load only sentiment-scored reviews (for Sentiment Dashboard).
-    TTL=30min."""
+    Drops heavy fields (comment, sentiment_summary) since the dashboard
+    only charts themes. Accepts optional date cutoff (ISO date string)
+    for server-side filtering. TTL=30min."""
     from supabase_db import get_supabase
     sb = get_supabase()
     try:
         all_rows = []
         page_size = 1000
         offset = 0
-        fields = (
-            "id,location_id,score,experienced_time,comment,"
-            "sentiment_themes,sentiment_summary"
-        )
+        fields = "id,location_id,score,experienced_time,sentiment_themes"
         while True:
-            resp = sb.table("tattle_reviews").select(fields).order(
+            q = sb.table("tattle_reviews").select(fields).order(
                 "experienced_time", desc=True
-            ).not_.is_("sentiment_themes", "null").range(
-                offset, offset + page_size - 1
-            ).execute()
+            ).not_.is_("sentiment_themes", "null")
+            if cutoff_date:
+                q = q.gte("experienced_time", cutoff_date)
+            q = q.range(offset, offset + page_size - 1)
+            resp = q.execute()
             if not resp.data:
                 break
             all_rows.extend(resp.data)
@@ -251,6 +252,28 @@ def _cached_tattle_scored():
         return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
+
+@st.cache_data(ttl=1800)
+def _cached_tattle_scored_count(cutoff_date=None):
+    """Return just a count of scored reviews + total reviews with comments
+    for the metric header. Much faster than loading all rows."""
+    from supabase_db import get_supabase
+    sb = get_supabase()
+    try:
+        q1 = sb.table("tattle_reviews").select("id", count="exact").not_.is_(
+            "sentiment_themes", "null"
+        )
+        q2 = sb.table("tattle_reviews").select("id", count="exact").not_.is_(
+            "comment", "null"
+        )
+        if cutoff_date:
+            q1 = q1.gte("experienced_time", cutoff_date)
+            q2 = q2.gte("experienced_time", cutoff_date)
+        scored_count = q1.limit(1).execute().count or 0
+        total_count  = q2.limit(1).execute().count or 0
+        return scored_count, total_count
+    except Exception:
+        return 0, 0
 
 @st.cache_data(ttl=300)
 def _cached_store_sales():
@@ -5195,13 +5218,34 @@ elif page == "Sentiment Dashboard":
     st.caption("AI-powered analysis of guest review themes — powered by Claude sentiment scoring.")
 
     ref_data = _cached_reference_data()
-    scored = _cached_tattle_scored()
-    # Get total comment count from light query
-    light_df = _cached_tattle_reviews_light()
-    total_reviews = len(light_df[light_df["comment"].notna()]) if not light_df.empty else 0
 
+    # Date range selector — default to last 6 months for performance
+    sent_date_range = st.radio(
+        "Date Range",
+        ["Last 3 Months", "Last 6 Months", "Last Year", "All Time"],
+        index=1, horizontal=True, key="sent_date_range",
+    )
+    if sent_date_range == "Last 3 Months":
+        sent_cutoff = str(date.today() - timedelta(days=90))
+    elif sent_date_range == "Last 6 Months":
+        sent_cutoff = str(date.today() - timedelta(days=180))
+    elif sent_date_range == "Last Year":
+        sent_cutoff = str(date.today() - timedelta(days=365))
+    else:
+        sent_cutoff = None
+
+    # Fast count query for the header metric (no row data pulled)
+    scored_count, total_reviews = _cached_tattle_scored_count(sent_cutoff)
+
+    st.metric("Scored Reviews", f"{scored_count:,} / {total_reviews:,} with comments")
+    if scored_count == 0:
+        st.warning("No reviews have been sentiment-scored yet. Run the Tattle Sentiment Scoring workflow.")
+        st.stop()
+
+    # Now load the actual rows (lighter payload — no comment/summary text)
+    scored = _cached_tattle_scored(sent_cutoff)
     if scored.empty:
-        st.info("No Tattle review data available.")
+        st.info("No scored review data in the selected date range.")
         st.stop()
 
     # Build lookups
@@ -5211,13 +5255,6 @@ elif page == "Sentiment Dashboard":
     scored["dm"] = scored["location_id"].map(dm_lookup)
     scored["experienced_time"] = pd.to_datetime(scored["experienced_time"], errors="coerce")
     scored["month"] = scored["experienced_time"].dt.to_period("M").astype(str)
-
-    scored_count = len(scored)
-
-    st.metric("Scored Reviews", f"{scored_count:,} / {total_reviews:,} with comments")
-    if scored_count == 0:
-        st.warning("No reviews have been sentiment-scored yet. Run the Tattle Sentiment Scoring workflow.")
-        st.stop()
 
     # --- Filters ---
     dm_list = sorted(scored["dm"].dropna().unique().tolist())
