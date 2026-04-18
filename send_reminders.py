@@ -851,47 +851,53 @@ def main():
             gm       = gm_contacts.get(loc_id, {})
             gm_name  = gm.get("gm_name", "")
             gm_email = gm.get("email", "")
-            token    = gm.get("token", "")
 
             if not gm_email:
                 print(f"  SKIP  {store_name} ({loc_id}) \u2014 no GM email on file")
                 skipped += 1
                 continue
 
-            portal_url = f"{GM_PORTAL_URL}?token={token}" if token else GM_PORTAL_URL
-            subject    = build_subject(store_name, week_label, mode)
+            # Determine the submission token for this (store, week).
+            # Tokens MUST be unique per submission row — we generate a fresh one
+            # if no submission exists yet. NEVER reuse gm_contacts.token for the
+            # submission row (it's a persistent per-GM token that would collide
+            # with prior weeks' submissions on the unique constraint).
+            token = None
+            try:
+                existing = sb.table("rev_band_submissions").select("id,token").eq(
+                    "location_id", loc_id
+                ).eq("week_start", str(target_week)).execute()
+                if existing.data:
+                    # Submission already exists for this week — use its token
+                    token = existing.data[0].get("token")
+                else:
+                    # Generate a fresh unique token and insert
+                    import uuid
+                    token = str(uuid.uuid4())
+                    try:
+                        sb.table("rev_band_submissions").insert({
+                            "location_id": loc_id,
+                            "week_start":  str(target_week),
+                            "token":       token,
+                            "status":      "pending_gm",
+                        }).execute()
+                    except Exception:
+                        # Race condition — another run inserted first. Re-query.
+                        retry = sb.table("rev_band_submissions").select("token").eq(
+                            "location_id", loc_id
+                        ).eq("week_start", str(target_week)).execute()
+                        if retry.data and retry.data[0].get("token"):
+                            token = retry.data[0]["token"]
+            except Exception as e:
+                print(f"  \u26a0 Could not create submission record for {store_name}: {e}")
 
-            # Ensure a submission record exists in rev_band_submissions so the
-            # portal can look up the token and identify the store + week.
-            # Upsert on (location_id, week_start) — prevents race conditions if
-            # the workflow runs twice (retry, manual dispatch + schedule overlap).
-            if token:
-                try:
-                    existing = sb.table("rev_band_submissions").select("id,token").eq(
-                        "location_id", loc_id
-                    ).eq("week_start", str(target_week)).execute()
-                    if existing.data:
-                        # Row already exists — reuse its token so the email link matches
-                        token = existing.data[0].get("token") or token
-                    else:
-                        # Use upsert with on_conflict to atomically insert-or-skip.
-                        # If another parallel run inserted first, this becomes a no-op.
-                        try:
-                            sb.table("rev_band_submissions").upsert({
-                                "location_id": loc_id,
-                                "week_start":  str(target_week),
-                                "token":       token,
-                                "status":      "pending_gm",
-                            }, on_conflict="location_id,week_start").execute()
-                        except Exception:
-                            # Fallback: re-query to get whatever token got inserted
-                            retry = sb.table("rev_band_submissions").select("token").eq(
-                                "location_id", loc_id
-                            ).eq("week_start", str(target_week)).execute()
-                            if retry.data and retry.data[0].get("token"):
-                                token = retry.data[0]["token"]
-                except Exception as e:
-                    print(f"  \u26a0 Could not create submission record for {store_name}: {e}")
+            if not token:
+                print(f"  SKIP  {store_name} ({loc_id}) \u2014 could not obtain submission token")
+                skipped += 1
+                continue
+
+            portal_url = f"{GM_PORTAL_URL}?token={token}"
+            subject    = build_subject(store_name, week_label, mode)
 
             perf     = load_store_performance(loc_id, target_week)
 
