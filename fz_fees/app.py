@@ -4144,15 +4144,31 @@ elif page == "Sales Forecasts":
             gas_df['week_start'] = pd.to_datetime(gas_df['week_start'])
             gas_df['price_per_gallon'] = pd.to_numeric(gas_df['price_per_gallon'], errors='coerce')
 
+        # Pre-load weekly_actuals for this week (newer uploaded data takes
+        # precedence over the daily store_sales historical table).
+        wa_resp = sb.table("weekly_actuals").select("location_id,net_sales").eq(
+            "week_start", str(wk_start.date())
+        ).execute()
+        weekly_actuals_lookup = {}
+        for r in (wa_resp.data or []):
+            try:
+                v = float(r.get("net_sales") or 0)
+                if v > 0:
+                    weekly_actuals_lookup[r["location_id"]] = v
+            except (ValueError, TypeError):
+                pass
+
         updated = 0
         for fc in forecast_rows:
             loc_id = fc['location_id']
 
-            # Actual sales
-            s_resp = sb.table("store_sales").select("net_sales").eq(
-                "location_id", loc_id
-            ).gte("sale_date", str(wk_start.date())).lte("sale_date", str(wk_end.date())).execute()
-            actual_sales = sum(float(r['net_sales']) for r in s_resp.data) if s_resp.data else None
+            # Actual sales: prefer weekly_actuals, fall back to summing daily store_sales
+            actual_sales = weekly_actuals_lookup.get(loc_id)
+            if actual_sales is None:
+                s_resp = sb.table("store_sales").select("net_sales").eq(
+                    "location_id", loc_id
+                ).gte("sale_date", str(wk_start.date())).lte("sale_date", str(wk_end.date())).execute()
+                actual_sales = sum(float(r['net_sales']) for r in s_resp.data) if s_resp.data else None
 
             # Actual weather
             w_resp = sb.table("weather_history").select(
