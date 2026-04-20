@@ -2130,17 +2130,24 @@ elif page == "Store Revenue Bands":
 
                     cfg = cfg.sort_values("location_id").reset_index(drop=True)
 
-                    # Load 2-week average sales for each store
+                    # Load 2-week average sales for each store — uses the last
+                    # TWO COMPLETED weeks before the target. The week immediately
+                    # before the target may still be in progress (not yet uploaded),
+                    # so we skip it and go one further back.
+                    # Example target_week = 2026-04-23 (Thu 4/23):
+                    #   - week_start 2026-04-02 (week ending 4/8)
+                    #   - week_start 2026-04-09 (week ending 4/15)
                     _export_sales = {}
                     try:
                         from collections import defaultdict as _dd
                         from supabase_db import get_supabase
                         _exp_sb = get_supabase()
-                        _exp_2w_start = w - timedelta(weeks=2)
+                        _exp_start = w - timedelta(weeks=3)   # 2 completed weeks back
+                        _exp_end   = w - timedelta(weeks=1)   # last completed week
                         _exp_actuals = _exp_sb.table("weekly_actuals").select(
                             "location_id,week_start,net_sales"
-                        ).gte("week_start", str(_exp_2w_start)).lt(
-                            "week_start", str(w)
+                        ).gte("week_start", str(_exp_start)).lt(
+                            "week_start", str(_exp_end)
                         ).execute().data or []
                         _exp_wk = _dd(list)
                         for _r in _exp_actuals:
@@ -2344,16 +2351,18 @@ elif page == "Store Revenue Bands":
                 except ValueError:
                     return -1
 
-            # Load 2-week avg sales
+            # Load 2-week avg sales — last TWO COMPLETED weeks (skip current
+            # in-progress week which may not be uploaded yet).
             _email_sales = {}
             try:
                 from collections import defaultdict as _edd
                 from supabase_db import get_supabase
                 _esb = get_supabase()
-                _e2w = ew - timedelta(weeks=2)
+                _e_start = ew - timedelta(weeks=3)   # 2 completed weeks back
+                _e_end   = ew - timedelta(weeks=1)   # last completed week
                 _eact = _esb.table("weekly_actuals").select(
                     "location_id,week_start,net_sales"
-                ).gte("week_start", str(_e2w)).lt("week_start", str(ew)).execute().data or []
+                ).gte("week_start", str(_e_start)).lt("week_start", str(_e_end)).execute().data or []
                 _ewk = _edd(list)
                 for _r in _eact:
                     _v = float(_r.get("net_sales") or 0)
