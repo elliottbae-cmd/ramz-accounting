@@ -1,0 +1,42 @@
+location_id,store_name,dm,revenue_band,latitude,longitude,location_type,open_date,brand,active,store_type
+112-0001,Stillwater (OK),Manny,35k-40k,36.1338,-97.0618,suburban,2012-06-05,Freddy's,True,traditional
+112-0002,Muskogee (OK),Dottie,35k-40k,35.7703,-95.3676,suburban,2014-01-07,Freddy's,True,traditional
+112-0003,Lawton (OK),Manny,<25k,34.6238,-98.4805,highway,2015-03-10,Freddy's,True,traditional
+112-0004,Ardmore (OK),Manny,<25k,34.1805,-97.1667,highway,2016-01-12,Freddy's,True,traditional
+112-0020,Strongsville (OH),Alex,<25k,41.3225,-81.8371,shopping_center,2022-01-11,Freddy's,True,traditional
+112-0021,Loveland (OH),Renee,30k-35k,39.2891,-84.3014,suburban,2023-04-04,Freddy's,True,traditional
+112-0022,Avon (OH),Alex,<25k,41.467,-82.0145,shopping_center,2023-05-11,Freddy's,True,traditional
+112-0023,Lorain (OH),Alex,<25k,41.4218,-82.2087,suburban,2023-10-03,Freddy's,True,traditional
+112-0024,Beavercreek (OH),Cody,25k-30k,39.7552,-84.0544,shopping_center,2023-10-19,Freddy's,True,traditional
+112-0026,Fairfield (OH),Alex,<25k,39.8481,-82.7797,shopping_center,2024-02-13,Freddy's,True,traditional
+112-0027,Florence (KY),Alex,<25k,39.0118,-84.6364,shopping_center,2024-04-30,Freddy's,True,traditional
+112-0028,Englewood - S Main (OH),Cody,30k-35k,39.8641,-84.2869,suburban,2024-09-10,Freddy's,True,traditional
+112-0029,Grove City (OH),Cody,<25k,39.8625,-83.0529,suburban,2024-12-17,Freddy's,True,traditional
+112-0030,Hilliard (OH),Cody,<25k,40.0196,-83.1597,suburban,2025-02-04,Freddy's,True,traditional
+112-0031,McAlester (OK),Dottie,<25k,34.8926,-95.7779,highway,2024-12-10,Freddy's,True,traditional
+112-0032,Plano (TX),Miriam,<25k,32.9972,-96.6666,suburban,2025-01-14,Freddy's,True,traditional
+112-0033,Brownwood (TX),Steve,<25k,31.7288,-98.9821,suburban,2023-07-18,Freddy's,True,traditional
+112-0034,Marshall (TX),Miriam,<25k,32.5537,-94.3499,suburban,2025-03-18,Freddy's,True,traditional
+112-0035,Tulsa - 51st (OK),Dottie,NRO Seasoned,36.09,-95.7634,suburban,2025-12-02,Freddy's,True,traditional
+112-0036,Denton (TX),Steve,35k-40k,33.1633,-97.108,suburban,2025-07-29,Freddy's,True,traditional
+112-0037,McKinney - Hardin Blvd (TX),Miriam,35k-40k,33.2327,-96.6521,suburban,2025-11-04,Freddy's,True,traditional
+112-0038,Ada (OK),Dottie,NRO,34.7902,-96.6656,suburban,2025-12-16,Freddy's,True,traditional
+112-0040,Sherman,Steve,<25k,,,,,Freddy's,True,traditional
+112-0042,Victoria,Miriam,<25k,,,,,Freddy's,True,traditional
+112-0043,Greenville,Manny,<25k,,,,,Freddy's,True,traditional
+112-0005,Durant (OK),Manny,<25k,34.0038,-96.4023,highway,2018-12-11,Freddy's,True,traditional
+112-0006,Wichita Falls (TX),Steve,30k-35k,33.8717,-98.5461,suburban,2019-11-19,Freddy's,True,traditional
+112-0007,Gainesville (TX),Steve,<25k,33.6755,-97.1527,highway,2022-07-26,Freddy's,True,traditional
+112-0008,Lufkin (TX),Miriam,30k-35k,31.3126,-94.7183,suburban,2023-06-27,Freddy's,True,traditional
+112-0009,Nacogdoches (TX),Miriam,25k-30k,31.6383,-94.6536,suburban,2023-10-03,Freddy's,True,traditional
+112-0010,Little Elm (TX),Steve,<25k,33.2192,-96.8882,suburban,2024-05-15,Freddy's,True,traditional
+112-0011,Princeton (TX),Miriam,<25k,33.1786,-96.5216,suburban,2024-01-30,Freddy's,True,traditional
+112-0012,Amelia (OH),Renee,<25k,39.0512,-84.2511,suburban,2015-10-20,Freddy's,True,traditional
+112-0013,Milford (OH),Renee,<25k,39.1905,-84.2536,suburban,2016-04-19,Freddy's,True,traditional
+112-0014,Cincinnati - Winton Rd (OH),Renee,<25k,39.1758,-84.5196,urban,2016-07-19,Freddy's,True,traditional
+112-0015,Centerville (OH),Cody,45k-50k,39.6598,-84.11,suburban,2016-08-03,Freddy's,True,traditional
+112-0016,Cincinnati - Red Bank Rd (OH),Renee,<25k,39.1463,-84.4052,urban,2016-10-11,Freddy's,True,traditional
+112-0017,West Chester (OH),Cody,30k-35k,39.3611,-84.4213,shopping_center,2016-11-01,Freddy's,True,traditional
+112-0018,Harrison (OH),Renee,30k-35k,39.2581,-84.8026,suburban,2017-01-31,Freddy's,True,traditional
+112-0019,Streetsboro (OH),Alex,<25k,41.239,-81.3483,highway,2021-09-24,Freddy's,True,traditional
+112-9001,Stillwater - OSU (OK),,,,,,,Freddy's,False,non-traditional
