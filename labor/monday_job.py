@@ -288,8 +288,15 @@ def main():
         sig_lags.setdefault(k, []).append(int(r['lag_weeks']))
 
     # Load sales, SoS, VOTG for feature building
+    # Sales data lives in TWO tables:
+    #   - store_sales: historical DAILY data (backfilled, pre-3/26/26)
+    #   - weekly_actuals: current WEEKLY uploads (3/26/26+)
+    # Phase 3 (feature engineering) needs DAILY granularity → uses store_sales only.
+    # Phase 2 (backtest) needs TOTAL per week → checks weekly_actuals first, then
+    #   falls back to store_sales if weekly_actuals has no data for that week.
     print('\nLoading actuals data...')
     sales_raw = sb_get_all(url, hdrs, 'store_sales')
+    weekly_raw = sb_get_all(url, hdrs, 'weekly_actuals')
     sos_raw   = sb_get_all(url, hdrs, 'store_sos')
     votg_raw  = sb_get_all(url, hdrs, 'store_votg')
     gas_raw   = sb_get_all(url, hdrs, 'gas_price_history')
@@ -297,6 +304,18 @@ def main():
     sales_df = pd.DataFrame(sales_raw)[['location_id', 'sale_date', 'net_sales']]
     sales_df['sale_date'] = pd.to_datetime(sales_df['sale_date'])
     sales_df['net_sales'] = pd.to_numeric(sales_df['net_sales'])
+
+    # Build a separate lookup: (location_id, week_start_str) → net_sales
+    # Only used by Phase 2 backtest. Keeps daily sales_df untouched for Phase 3.
+    weekly_actuals_map = {}
+    if weekly_raw:
+        for r in weekly_raw:
+            key = (r['location_id'], str(r['week_start'])[:10])
+            try:
+                weekly_actuals_map[key] = float(r['net_sales'] or 0) or None
+            except (ValueError, TypeError):
+                pass
+        print(f'  Loaded {len(weekly_actuals_map)} weekly_actuals rows for Phase 2 backtest')
 
     sos_df = pd.DataFrame(sos_raw)[['location_id', 'sale_date', 'good_shift']]
     sos_df['sale_date'] = pd.to_datetime(sos_df['sale_date'])
@@ -370,13 +389,19 @@ def main():
         wk_start = pd.to_datetime(fc['week_start'])
         wk_end   = wk_start + timedelta(days=6)
 
-        # Actual sales for that week
-        store_sales = sales_df[
-            (sales_df['location_id'] == loc_id) &
-            (sales_df['sale_date'] >= wk_start) &
-            (sales_df['sale_date'] <= wk_end)
-        ]
-        actual_sales = float(store_sales['net_sales'].sum()) if len(store_sales) else None
+        # Actual sales for that week:
+        # 1. Prefer weekly_actuals (the newer uploaded data)
+        # 2. Fall back to summing daily store_sales for older weeks
+        wk_start_str = wk_start.strftime('%Y-%m-%d')
+        actual_sales = weekly_actuals_map.get((loc_id, wk_start_str))
+
+        if actual_sales is None:
+            store_sales = sales_df[
+                (sales_df['location_id'] == loc_id) &
+                (sales_df['sale_date'] >= wk_start) &
+                (sales_df['sale_date'] <= wk_end)
+            ]
+            actual_sales = float(store_sales['net_sales'].sum()) if len(store_sales) else None
 
         # Actual weather for that week (avg high/low, total precip)
         weather_week_raw = sb_get_all(url, hdrs, 'weather_history',
