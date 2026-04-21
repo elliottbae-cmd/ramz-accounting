@@ -1,0 +1,10 @@
+id,timestamp,user_email,week_start,location_id,field_changed,old_value,new_value,action
+1,2026-03-27T15:22:38+00:00,system,2026-03-19,ALL,week_lock,none,2026-03-19,initial-snapshot
+2,2026-03-27T15:58:49+00:00,admin,2026-03-19,ALL,week_lock,2026-03-19,deleted,admin-delete
+3,2026-03-27T15:59:04+00:00,system,2026-03-26,ALL,week_lock,none,2026-03-26,initial-snapshot
+4,2026-03-30T21:37:51+00:00,admin,2026-04-02,ALL,week_lock,draft,locked,manual-lock
+5,2026-03-30T21:38:08+00:00,admin,2026-04-02,ALL,week_lock,2026-04-02,deleted,admin-delete
+6,2026-04-02T19:48:55+00:00,admin,2026-04-02,ALL,week_lock,draft,locked,manual-lock
+7,2026-04-03T14:55:26+00:00,system,2026-03-19,ALL,week_lock,none,2026-03-19,initial-snapshot
+8,2026-04-06T21:35:53+00:00,admin,2026-04-09,ALL,week_lock,draft,locked,manual-lock
+9,2026-04-20T14:30:06+00:00,system,2026-04-16,ALL,week_lock,draft,2026-04-16,draft-to-lock
