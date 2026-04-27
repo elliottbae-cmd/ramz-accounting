@@ -361,25 +361,73 @@ def log_email(week_start, location_id, to_email, subject, email_type, success,
 
 
 # ── Sentiment synthesis ───────────────────────────────────────────────────────
-def fetch_weekly_store_reviews(location_id, week_start):
+def fetch_weekly_store_reviews(location_id, week_start, weeks_back=2):
     """
-    Fetch all scored Tattle reviews for a store for the given week.
+    Fetch all scored Tattle reviews for a store over the past `weeks_back`
+    completed weeks (default 2 — matches sales / SoS / VOTG cadence).
+
+    The window ends the day before `week_start` (the upcoming week being
+    emailed about) and goes back `weeks_back` weeks.
+
     Returns list of review dicts or empty list.
     """
-    week_end = week_start + timedelta(days=6)
+    window_end   = week_start - timedelta(days=1)               # last fully-complete day
+    window_start = week_start - timedelta(weeks=weeks_back)
     try:
         resp = (sb.table("tattle_reviews")
                   .select("score,comment,snapshots,sentiment_themes,sentiment_summary,"
-                          "questionnaire_title,day_part_label,channel_label")
+                          "questionnaire_title,day_part_label,channel_label,experienced_time")
                   .eq("location_id", location_id)
-                  .gte("completed_time", f"{week_start}T00:00:00")
-                  .lte("completed_time", f"{week_end}T23:59:59")
+                  .gte("completed_time", f"{window_start}T00:00:00")
+                  .lte("completed_time", f"{window_end}T23:59:59")
                   .not_.is_("sentiment_themes", "null")
                   .execute())
         return resp.data or []
     except Exception as e:
         print(f"  [WARN] Could not fetch reviews for {location_id}: {e}")
         return []
+
+
+def compute_negative_hour_distribution(reviews, top_n=5):
+    """
+    From a list of scored reviews, compute the top hours-of-day where
+    negative reviews (score < 70) cluster.
+
+    Returns a list of (hour_label, count) tuples, e.g.:
+        [("1pm", 3), ("12pm", 2), ("11am", 1)]
+
+    Hours are derived from `experienced_time` (when the guest visited),
+    not `completed_time` (when they submitted the review). Matches the
+    Tattle Insights heatmap logic.
+    """
+    from collections import Counter
+    hour_counts = Counter()
+    for r in reviews:
+        try:
+            score = float(r.get("score") or 0)
+        except (ValueError, TypeError):
+            continue
+        if score >= 70:
+            continue
+        ts = r.get("experienced_time")
+        if not ts:
+            continue
+        try:
+            # Parse ISO timestamp
+            dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            hour_counts[dt.hour] += 1
+        except (ValueError, TypeError):
+            continue
+
+    def fmt_hour(h):
+        # 0 -> 12am, 12 -> 12pm, 13 -> 1pm, 23 -> 11pm
+        if h == 0:   return "12am"
+        if h < 12:   return f"{h}am"
+        if h == 12:  return "12pm"
+        return f"{h - 12}pm"
+
+    top = hour_counts.most_common(top_n)
+    return [(fmt_hour(h), c) for h, c in top]
 
 
 def synthesize_weekly_sentiment(store_name, reviews, week_label):
@@ -417,24 +465,21 @@ def synthesize_weekly_sentiment(store_name, reviews, week_label):
                        if isinstance(r.get("sentiment_themes"), dict)
                        and r["sentiment_themes"].get("overall") == "negative")
 
-    prompt = f"""You are summarizing guest feedback for {store_name} for the week of {week_label}.
+    prompt = f"""You are summarizing guest feedback for {store_name} for the past 2 weeks ending {week_label}.
 
-Total reviews this week: {total}
+Total reviews: {total}
 Positive: {positive_ct} | Negative: {negative_ct}
 
 Individual reviews:
 {review_block}
 
-Write exactly two short paragraphs (2-3 sentences each) for a GM weekly email:
-1. A POSITIVE paragraph starting with "👍" — synthesize what guests praised most this week
-2. A NEGATIVE paragraph starting with "👎" — synthesize the most common complaints or concerns
-
-Rules:
+Write a single short paragraph (2-3 sentences) for a GM weekly email titled "What Customers Are Saying":
+- Synthesize the dominant themes — both what guests praised and what they complained about
 - Be specific to actual themes mentioned, not generic
 - Do not mention individual guests or quote directly
-- Keep each paragraph under 60 words
-- If there are no negatives, write "👎 No significant complaints this week — keep it up!"
-- Return only the two paragraphs, nothing else"""
+- Keep it under 80 words
+- If there are no reviews or no clear themes, write "Not enough recent guest feedback to summarize."
+- Return only the paragraph, no headings or formatting"""
 
     try:
         r = requests.post(
@@ -446,24 +491,21 @@ Rules:
             },
             data=json.dumps({
                 "model":      "claude-haiku-4-5-20251001",
-                "max_tokens": 300,
+                "max_tokens": 200,
                 "messages":   [{"role": "user", "content": prompt}],
             }),
             timeout=30,
         )
         if r.status_code != 200:
             print(f"  [WARN] Claude sentiment synthesis failed: {r.status_code}")
-            return None, None
+            return None
 
-        text      = r.json()["content"][0]["text"].strip()
-        parts     = text.split("\n👎", 1)
-        positive  = parts[0].strip()
-        negative  = ("👎" + parts[1].strip()) if len(parts) > 1 else None
-        return positive, negative
+        summary = r.json()["content"][0]["text"].strip()
+        return summary
 
     except Exception as e:
         print(f"  [WARN] Sentiment synthesis error: {e}")
-        return None, None
+        return None
 
 
 # ── HTML email builder ────────────────────────────────────────────────────────
@@ -507,64 +549,57 @@ def build_email_html(store_name, gm_name, week_label, portal_url, mode, perf=Non
     p = perf or {}
     avg_sos_min = fn(p.get("avg_sos") / 60 if p.get("avg_sos") is not None else None) + " min"
 
-    # ── Sentiment block ───────────────────────────────────────────────────────
+    # ── Sentiment block (new format: 1 paragraph + top hours) ────────────────
     s = sentiment or {}
-    positive_text = s.get("positive")
-    negative_text = s.get("negative")
-    if positive_text or negative_text:
+    summary_text   = s.get("summary")
+    negative_hours = s.get("negative_hours") or []
+    if summary_text or negative_hours:
+        # Build the hours list HTML
+        if negative_hours:
+            hour_rows = "".join(
+                f'<li style="padding:4px 0;color:#444;font-size:13px;">'
+                f'<strong>{hour}</strong> &mdash; {count} negative review{"s" if count != 1 else ""}'
+                f'</li>'
+                for hour, count in negative_hours
+            )
+            hours_block = f"""
+        <p style="margin:12px 0 4px;color:#666;font-size:13px;font-weight:bold;">
+          When complaints are coming in (top hours):
+        </p>
+        <ul style="margin:0;padding-left:20px;">{hour_rows}</ul>"""
+        else:
+            hours_block = (
+                '<p style="margin:12px 0 0;color:#27AE60;font-size:13px;'
+                'font-style:italic;">No negative reviews in this period &mdash; keep it up! 🎉</p>'
+            )
+
         sentiment_block = f"""
-    <table width="100%" cellpadding="8" cellspacing="0"
+    <table width="100%" cellpadding="0" cellspacing="0"
            style="margin:20px 0;border-collapse:collapse;border:1px solid #e0e0e0;border-radius:6px;">
       <tr style="background:#2B3A4E;">
-        <td style="color:#fff;font-size:14px;font-weight:bold;padding:10px 12px;border-radius:4px 4px 0 0;">
-          What Your Guests Are Saying This Week
+        <td style="color:#fff;font-size:14px;font-weight:bold;padding:10px 14px;border-radius:6px 6px 0 0;">
+          💬 What Customers Are Saying (Past 2 Weeks)
         </td>
       </tr>
-      {'<tr><td style="padding:12px;font-size:14px;color:#333;line-height:1.6;border-bottom:1px solid #eee;">' + positive_text + '</td></tr>' if positive_text else ''}
-      {'<tr><td style="padding:12px;font-size:14px;color:#333;line-height:1.6;">' + negative_text + '</td></tr>' if negative_text else ''}
+      <tr><td style="padding:14px;">
+        <p style="margin:0;color:#333;font-size:14px;line-height:1.6;">
+          {summary_text or 'Not enough recent guest feedback to summarize.'}
+        </p>
+        {hours_block}
+      </td></tr>
     </table>"""
     else:
         sentiment_block = ""
 
-    perf_table = f"""
-    <table width="100%" cellpadding="8" cellspacing="0" style="margin:20px 0;border-collapse:collapse;">
-      <tr style="background:#2B3A4E;">
-        <td colspan="2" style="color:#fff;font-size:14px;font-weight:bold;padding:10px 12px;border-radius:4px 4px 0 0;">
-          Store Performance Snapshot
-        </td>
-      </tr>
-      <tr style="background:#f9f9f9;">
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Prior Year — Same Week Sales</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fc(p.get("py_sales"))}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Last Week Sales</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fc(p.get("prev_week_1_sales"))}</td>
-      </tr>
-      <tr style="background:#f9f9f9;">
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Two Weeks Ago Sales</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fc(p.get("prev_week_2_sales"))}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Avg Sales (Last 2 Weeks)</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fc(p.get("avg_recent_sales"))}</td>
-      </tr>
-      <tr style="background:#f9f9f9;">
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Avg Speed of Service (Last 4 Weeks)</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{avg_sos_min}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Speed of Service Rank (Last Week)</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{rank_str(p.get("last_week_sos_rank"), p.get("sos_total_stores"))}</td>
-      </tr>
-      <tr style="background:#f9f9f9;">
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;font-size:13px;">Avg Negative Reviews (Last 4 Weeks)</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;font-size:13px;font-weight:bold;text-align:right;">{fn(p.get("avg_negative_reviews"), 0)}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px 12px;color:#666;font-size:13px;">VOTG Rank (Last Week)</td>
-        <td style="padding:8px 12px;color:#333;font-size:13px;font-weight:bold;text-align:right;">{rank_str(p.get("last_week_votg_rank"), p.get("votg_total_stores"))}</td>
-      </tr>
+    # ── Performance teaser (hook approach — full data lives on portal) ───────
+    perf_teaser = f"""
+    <table width="100%" cellpadding="0" cellspacing="0"
+           style="margin:16px 0;border-collapse:collapse;background:#F5F0EB;border-radius:6px;">
+      <tr><td style="padding:14px 18px;color:#2B3A4E;font-size:13px;line-height:1.5;">
+        📊 Your full performance — sales, SoS rank, VOTG rank, and 2-week trends —
+        is waiting in your selection portal. Click below to review the data and
+        select your band.
+      </td></tr>
     </table>"""
 
     return f"""<!DOCTYPE html>
@@ -592,8 +627,8 @@ def build_email_html(store_name, gm_name, week_label, portal_url, mode, perf=Non
       {intro} Please complete your selection for <strong>{store_name}</strong>
       for the week of <strong>{week_label}</strong>.
     </p>
-    {perf_table}
     {sentiment_block}
+    {perf_teaser}
     {final_block}
     <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
     <tr><td align="center">
@@ -901,16 +936,42 @@ def main():
 
             perf     = load_store_performance(loc_id, target_week)
 
-            # Fetch and synthesize weekly guest sentiment
+            # Fetch + synthesize 2-week guest sentiment
+            # Saves the result to rev_band_submissions so the portal can display
+            # the same data without making its own Claude calls.
             sentiment = {}
             if ANTHROPIC_KEY:
-                reviews = fetch_weekly_store_reviews(loc_id, target_week)
+                reviews = fetch_weekly_store_reviews(loc_id, target_week, weeks_back=2)
                 if reviews:
-                    pos, neg = synthesize_weekly_sentiment(store_name, reviews, week_label)
-                    if pos is None and neg is None:
+                    summary_text  = synthesize_weekly_sentiment(store_name, reviews, week_label)
+                    negative_hours = compute_negative_hour_distribution(reviews, top_n=5)
+                    if summary_text is None:
                         sentiment_failures += 1
                     else:
-                        sentiment = {"positive": pos, "negative": neg}
+                        # Count negatives (score < 70) without pandas dependency
+                        neg_count = 0
+                        for _r in reviews:
+                            try:
+                                if float(_r.get("score") or 0) < 70:
+                                    neg_count += 1
+                            except (ValueError, TypeError):
+                                pass
+                        sentiment = {
+                            "summary":         summary_text,
+                            "negative_hours":  negative_hours,
+                            "review_count":    len(reviews),
+                            "negative_count":  neg_count,
+                            "generated_at":    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        }
+                        # Persist to DB so portal can read without its own Claude call
+                        try:
+                            sb.table("rev_band_submissions").update({
+                                "sentiment_summary_data": sentiment,
+                            }).eq("location_id", loc_id).eq(
+                                "week_start", str(target_week)
+                            ).execute()
+                        except Exception as _se:
+                            print(f"  [WARN] Could not save sentiment to DB for {store_name}: {_se}")
                 else:
                     sentiment_missing_data += 1
             else:
