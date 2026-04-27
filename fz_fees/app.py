@@ -106,6 +106,27 @@ def _fmt_variance(result, variance):
     sign = "+" if variance >= 0 else ""
     return f"{sign}${variance:,.0f} ({result})"
 
+
+def get_last_completed_week():
+    """
+    Return (thu_start, wed_end) of the most recently completed Thu-Wed week.
+
+    Examples (assuming today is Mon 4/27/26):
+      thu_start = 4/16, wed_end = 4/22
+
+    On Monday Tattle ingestion runs and pulls last week's reviews, so this
+    is the typical "show me last week's data" cutoff for the Guest Experience
+    pages.
+    """
+    today = date.today()
+    days_since_wed = (today.weekday() - 2) % 7
+    if days_since_wed == 0:
+        # Today IS Wednesday — the current Wed isn't complete yet, go back one
+        days_since_wed = 7
+    wed_end   = today - timedelta(days=days_since_wed)
+    thu_start = wed_end - timedelta(days=6)
+    return thu_start, wed_end
+
 # ---------------------------------------------------------------------------
 # Cached data loaders (avoid re-reading on every Streamlit rerun)
 # ---------------------------------------------------------------------------
@@ -223,11 +244,11 @@ def _cached_tattle_with_snapshots():
         return pd.DataFrame()
 
 @st.cache_data(ttl=1800)
-def _cached_tattle_scored(cutoff_date=None):
+def _cached_tattle_scored(cutoff_date=None, end_cutoff=None):
     """Load only sentiment-scored reviews (for Sentiment Dashboard).
     Drops heavy fields (comment, sentiment_summary) since the dashboard
-    only charts themes. Accepts optional date cutoff (ISO date string)
-    for server-side filtering. TTL=30min."""
+    only charts themes. Optional date range filtering (ISO date strings)
+    applied server-side. TTL=30min."""
     from supabase_db import get_supabase
     sb = get_supabase()
     try:
@@ -241,6 +262,8 @@ def _cached_tattle_scored(cutoff_date=None):
             ).not_.is_("sentiment_themes", "null")
             if cutoff_date:
                 q = q.gte("experienced_time", cutoff_date)
+            if end_cutoff:
+                q = q.lt("experienced_time", end_cutoff)
             q = q.range(offset, offset + page_size - 1)
             resp = q.execute()
             if not resp.data:
@@ -254,7 +277,7 @@ def _cached_tattle_scored(cutoff_date=None):
         return pd.DataFrame()
 
 @st.cache_data(ttl=1800)
-def _cached_tattle_scored_count(cutoff_date=None):
+def _cached_tattle_scored_count(cutoff_date=None, end_cutoff=None):
     """Return just a count of scored reviews + total reviews with comments
     for the metric header. Much faster than loading all rows."""
     from supabase_db import get_supabase
@@ -269,6 +292,9 @@ def _cached_tattle_scored_count(cutoff_date=None):
         if cutoff_date:
             q1 = q1.gte("experienced_time", cutoff_date)
             q2 = q2.gte("experienced_time", cutoff_date)
+        if end_cutoff:
+            q1 = q1.lt("experienced_time", end_cutoff)
+            q2 = q2.lt("experienced_time", end_cutoff)
         scored_count = q1.limit(1).execute().count or 0
         total_count  = q2.limit(1).execute().count or 0
         return scored_count, total_count
@@ -4684,10 +4710,15 @@ elif page == "SoS/VOTG Trends":
         else:
             selected_ids = store_ids
 
-    period = st.radio("Period", ["All Weeks", "Last Month", "Last Quarter", "Last Year"],
-                      horizontal=True, key="sos_period")
+    period = st.radio("Period", ["Last Week", "All Weeks", "Last Month", "Last Quarter", "Last Year"],
+                      horizontal=True, key="sos_period", index=1)  # default "All Weeks"
     cutoff = None
-    if period == "Last Month":
+    end_cutoff = None
+    if period == "Last Week":
+        _thu, _wed = get_last_completed_week()
+        cutoff = str(_thu)
+        end_cutoff = str(_thu)  # exact-week match (week_start IS Thursday)
+    elif period == "Last Month":
         cutoff = str(date.today() - timedelta(days=30))
     elif period == "Last Quarter":
         cutoff = str(date.today() - timedelta(days=90))
@@ -4700,6 +4731,8 @@ elif page == "SoS/VOTG Trends":
         sos = sos_df[sos_df["location_id"].isin(selected_ids)].copy()
         if cutoff:
             sos = sos[sos["week_start"] >= cutoff]
+        if end_cutoff:
+            sos = sos[sos["week_start"] <= end_cutoff]
         if sos.empty:
             st.info("No SoS data for the selected filters.")
         else:
@@ -4782,6 +4815,8 @@ elif page == "SoS/VOTG Trends":
         votg = votg_df[votg_df["location_id"].isin(selected_ids)].copy()
         if cutoff:
             votg = votg[votg["week_start"] >= cutoff]
+        if end_cutoff:
+            votg = votg[votg["week_start"] <= end_cutoff]
         if votg.empty:
             st.info("No VOTG data for the selected filters.")
         else:
@@ -4889,20 +4924,27 @@ elif page == "Tattle Insights":
     ref_data = _cached_reference_data()
 
     # Date range selector — default to last 6 months for performance
-    date_range = st.radio("Date Range", ["Last 3 Months", "Last 6 Months", "Last Year", "All Time"],
-                          index=1, horizontal=True, key="tattle_date_range")
-    if date_range == "Last 3 Months":
+    date_range = st.radio(
+        "Date Range",
+        ["Last Week", "Last 3 Months", "Last 6 Months", "Last Year", "All Time"],
+        index=2, horizontal=True, key="tattle_date_range",
+    )
+    date_cutoff = None
+    date_end_cutoff = None
+    if date_range == "Last Week":
+        _thu, _wed = get_last_completed_week()
+        date_cutoff = str(_thu)
+        date_end_cutoff = str(_wed + timedelta(days=1))   # exclusive — drops current week
+    elif date_range == "Last 3 Months":
         date_cutoff = str(date.today() - timedelta(days=90))
     elif date_range == "Last 6 Months":
         date_cutoff = str(date.today() - timedelta(days=180))
     elif date_range == "Last Year":
         date_cutoff = str(date.today() - timedelta(days=365))
-    else:
-        date_cutoff = None
 
     # Load reviews with date filter applied at the query level
     @st.cache_data(ttl=1800)
-    def _load_tattle_filtered(cutoff):
+    def _load_tattle_filtered(cutoff, end_cutoff=None):
         from supabase_db import get_supabase
         sb = get_supabase()
         all_rows = []
@@ -4917,6 +4959,8 @@ elif page == "Tattle Insights":
             q = sb.table("tattle_reviews").select(fields).order("experienced_time", desc=True)
             if cutoff:
                 q = q.gte("experienced_time", cutoff)
+            if end_cutoff:
+                q = q.lt("experienced_time", end_cutoff)
             q = q.range(offset, offset + page_size - 1)
             resp = q.execute()
             if not resp.data:
@@ -4927,7 +4971,7 @@ elif page == "Tattle Insights":
             offset += page_size
         return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
 
-    reviews_df = _load_tattle_filtered(date_cutoff)
+    reviews_df = _load_tattle_filtered(date_cutoff, date_end_cutoff)
 
     if reviews_df.empty:
         st.info("No Tattle review data available. Run the Tattle ingestion workflow first.")
@@ -5247,20 +5291,24 @@ elif page == "Sentiment Dashboard":
     # Date range selector — default to last 6 months for performance
     sent_date_range = st.radio(
         "Date Range",
-        ["Last 3 Months", "Last 6 Months", "Last Year", "All Time"],
-        index=1, horizontal=True, key="sent_date_range",
+        ["Last Week", "Last 3 Months", "Last 6 Months", "Last Year", "All Time"],
+        index=2, horizontal=True, key="sent_date_range",
     )
-    if sent_date_range == "Last 3 Months":
+    sent_cutoff = None
+    sent_end_cutoff = None
+    if sent_date_range == "Last Week":
+        _thu, _wed = get_last_completed_week()
+        sent_cutoff = str(_thu)
+        sent_end_cutoff = str(_wed + timedelta(days=1))   # exclusive — drops current week
+    elif sent_date_range == "Last 3 Months":
         sent_cutoff = str(date.today() - timedelta(days=90))
     elif sent_date_range == "Last 6 Months":
         sent_cutoff = str(date.today() - timedelta(days=180))
     elif sent_date_range == "Last Year":
         sent_cutoff = str(date.today() - timedelta(days=365))
-    else:
-        sent_cutoff = None
 
     # Fast count query for the header metric (no row data pulled)
-    scored_count, total_reviews = _cached_tattle_scored_count(sent_cutoff)
+    scored_count, total_reviews = _cached_tattle_scored_count(sent_cutoff, sent_end_cutoff)
 
     st.metric("Scored Reviews", f"{scored_count:,} / {total_reviews:,} with comments")
     if scored_count == 0:
@@ -5268,7 +5316,7 @@ elif page == "Sentiment Dashboard":
         st.stop()
 
     # Now load the actual rows (lighter payload — no comment/summary text)
-    scored = _cached_tattle_scored(sent_cutoff)
+    scored = _cached_tattle_scored(sent_cutoff, sent_end_cutoff)
     if scored.empty:
         st.info("No scored review data in the selected date range.")
         st.stop()
