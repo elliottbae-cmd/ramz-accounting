@@ -25,7 +25,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install sendgrid supabase streamlit
+        run: pip install sendgrid supabase requests
 
       - name: Send test email
         env:
@@ -33,6 +33,8 @@ jobs:
           SUPABASE_KEY:        ${{ secrets.SUPABASE_KEY }}
           SENDGRID_API_KEY:    ${{ secrets.SENDGRID_API_KEY }}
           SENDGRID_FROM_EMAIL: ${{ secrets.SENDGRID_FROM_EMAIL }}
+          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+          GM_PORTAL_URL:       ${{ secrets.GM_PORTAL_URL }}
           TEST_EMAIL:          ${{ github.event.inputs.test_email }}
           TEST_STORE_ID:       ${{ github.event.inputs.test_store_id }}
         run: python test_gm_email.py
