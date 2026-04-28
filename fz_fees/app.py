@@ -82,10 +82,14 @@ BAND_RANGES = {
 def _band_classify(band, actual):
     """Return (result, variance) for a band + actual sales pair.
     variance is positive (Over) or negative (Under) or 0 (On Target).
+    Returns ("Pending", None) when no actual sales yet (week not complete).
     """
     ranges = BAND_RANGES.get(band)
-    if ranges is None or actual is None:
+    if ranges is None:
         return "N/A", None
+    # Treat None or NaN as "week not yet complete" — distinct from N/A (NRO)
+    if actual is None or (isinstance(actual, float) and pd.isna(actual)):
+        return "Pending", None
     band_min, band_max = ranges
     if actual < band_min:
         return "Under", actual - band_min          # negative
@@ -99,6 +103,8 @@ def _fmt_variance(result, variance):
     """Format variance as '+$2,400 (Over)' / '-$1,800 (Under)' / 'On Target'."""
     if result == "N/A":
         return "N/A"
+    if result == "Pending":
+        return ""           # week not yet complete — display blank
     if result == "On Target":
         return "On Target"
     if variance is None:
@@ -303,25 +309,54 @@ def _cached_tattle_scored_count(cutoff_date=None, end_cutoff=None):
 
 @st.cache_data(ttl=300)
 def _cached_store_sales():
-    """Load store sales data (last 52 weeks) aggregated to weekly totals.
-    TTL=5min — heavier table, changes less often."""
+    """Load store sales data (last 52 weeks) aggregated to Thu-anchored weekly totals.
+
+    Combines TWO sources:
+      - store_sales:    historical DAILY data (backfilled, pre-3/26/26)
+      - weekly_actuals: current WEEKLY uploads (3/26/26+)
+
+    For weeks present in both tables, weekly_actuals wins (it's the newer,
+    canonical source). TTL=5min."""
     from supabase_db import get_supabase
     sb = get_supabase()
     cutoff = str(date.today() - timedelta(weeks=52))
     try:
+        # Daily historical → aggregate to weekly
         resp = sb.table("store_sales").select(
             "location_id,sale_date,net_sales"
         ).gte("sale_date", cutoff).execute()
-        if not resp.data:
-            return pd.DataFrame()
-        df = pd.DataFrame(resp.data)
-        # Aggregate daily rows → Thu-anchored weekly totals
-        df["sale_date"] = pd.to_datetime(df["sale_date"])
-        df["net_sales"] = pd.to_numeric(df["net_sales"], errors="coerce").fillna(0)
-        df["days_since_thu"] = (df["sale_date"].dt.weekday - 3) % 7
-        df["week_start"] = (df["sale_date"] - pd.to_timedelta(df["days_since_thu"], unit="D")).dt.date.astype(str)
-        weekly = df.groupby(["location_id", "week_start"], as_index=False)["net_sales"].sum()
-        return weekly
+        if resp.data:
+            df = pd.DataFrame(resp.data)
+            df["sale_date"] = pd.to_datetime(df["sale_date"])
+            df["net_sales"] = pd.to_numeric(df["net_sales"], errors="coerce").fillna(0)
+            df["days_since_thu"] = (df["sale_date"].dt.weekday - 3) % 7
+            df["week_start"] = (df["sale_date"] - pd.to_timedelta(
+                df["days_since_thu"], unit="D"
+            )).dt.date.astype(str)
+            historical = df.groupby(["location_id", "week_start"], as_index=False)["net_sales"].sum()
+        else:
+            historical = pd.DataFrame(columns=["location_id", "week_start", "net_sales"])
+
+        # Recent weekly uploads (canonical for any overlapping weeks)
+        wa_resp = sb.table("weekly_actuals").select(
+            "location_id,week_start,net_sales"
+        ).gte("week_start", cutoff).execute()
+        if wa_resp.data:
+            weekly = pd.DataFrame(wa_resp.data)
+            weekly["net_sales"] = pd.to_numeric(weekly["net_sales"], errors="coerce").fillna(0)
+            weekly["week_start"] = weekly["week_start"].astype(str)
+        else:
+            weekly = pd.DataFrame(columns=["location_id", "week_start", "net_sales"])
+
+        # Combine — weekly_actuals takes precedence over store_sales for shared keys
+        if not weekly.empty and not historical.empty:
+            uploaded_keys = set(zip(weekly["location_id"], weekly["week_start"]))
+            historical = historical[~historical.apply(
+                lambda r: (r["location_id"], r["week_start"]) in uploaded_keys, axis=1
+            )]
+
+        combined = pd.concat([historical, weekly], ignore_index=True)
+        return combined if not combined.empty else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
 
@@ -3670,7 +3705,9 @@ elif page == "Rev Band Report":
             "Selected Band": band,
             "Band Range":    band_range_str,
             "Actual Sales":  f"${actual_num:,.0f}" if actual_num is not None else "No Data",
-            "Result":        result,
+            # Display blank for Pending (week not yet complete) so it's clear
+            # the result hasn't been calculated rather than misleading "On Target"
+            "Result":        "" if result == "Pending" else result,
             "$ Variance":    variance_fmt,
             "_variance_raw": variance if variance is not None else 0.0,
             "_result_raw":   result,
@@ -3683,12 +3720,18 @@ elif page == "Rev Band Report":
     report_df = pd.DataFrame(rows)
 
     # --- Summary Metrics ---
-    has_sales = report_df[report_df["Actual Sales"] != "No Data"]
+    # Only count rows where the week is complete AND we have actual sales.
+    # Pending rows (week not yet complete) shouldn't roll into Over/Under/On Target.
+    has_sales = report_df[
+        (report_df["Actual Sales"] != "No Data")
+        & (report_df["_result_raw"] != "Pending")
+    ]
     total      = len(has_sales)
     on_target  = int((has_sales["Result"] == "On Target").sum())
     over       = int((has_sales["Result"] == "Over").sum())
     under      = int((has_sales["Result"] == "Under").sum())
     no_data    = int((report_df["Actual Sales"] == "No Data").sum())
+    pending_ct = int((report_df["_result_raw"] == "Pending").sum())
     avg_var    = has_sales["_variance_raw"].mean() if total else 0
 
     m1, m2, m3, m4, m5 = st.columns(5)

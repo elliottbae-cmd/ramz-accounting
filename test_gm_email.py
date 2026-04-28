@@ -25,6 +25,10 @@ from datetime import date, datetime, timedelta, timezone
 # --- Config ---
 TEST_EMAIL          = os.environ.get("TEST_EMAIL", "elliottbae@gmail.com")
 TEST_STORE_ID       = os.environ.get("TEST_STORE_ID", "112-0001")
+# RECOVERY_MODE=1 → drop the [TEST] prefix and treat this as a real send.
+# Used when re-sending an email to a single real GM (e.g., recovering a
+# manually-deleted submission row). Default off for safety.
+RECOVERY_MODE       = os.environ.get("RECOVERY_MODE", "").strip().lower() in ("1", "true", "yes")
 SENDGRID_API_KEY    = os.environ.get("SENDGRID_API_KEY", "")
 SENDGRID_FROM_EMAIL = os.environ.get("SENDGRID_FROM_EMAIL", "")
 SUPABASE_URL        = os.environ.get("SUPABASE_URL", "")
@@ -165,7 +169,8 @@ else:
 print()
 print(f"Step 6: Building email body")
 portal_url = f"{GM_PORTAL_URL}?token={test_token}"
-subject    = f"[TEST] {sr.build_subject(store_name, week_label, 'initial')}"
+real_subject = sr.build_subject(store_name, week_label, 'initial')
+subject = real_subject if RECOVERY_MODE else f"[TEST] {real_subject}"
 html_body  = sr.build_email_html(store_name, "Test GM", week_label, portal_url, "initial",
                                  perf, sentiment)
 

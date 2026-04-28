@@ -11,6 +11,14 @@ on:
         description: "Store ID to simulate (e.g. 112-0001)"
         required: false
         default: "112-0001"
+      recovery_mode:
+        description: "Recovery mode? (drops [TEST] prefix — use to send a real email to a real GM)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   send-test:
@@ -38,4 +46,5 @@ jobs:
           # in test_gm_email.py / send_reminders.py (https://ramz-gm-select.streamlit.app)
           TEST_EMAIL:          ${{ github.event.inputs.test_email }}
           TEST_STORE_ID:       ${{ github.event.inputs.test_store_id }}
+          RECOVERY_MODE:       ${{ github.event.inputs.recovery_mode || 'false' }}
         run: python test_gm_email.py
