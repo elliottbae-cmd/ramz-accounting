@@ -34,7 +34,8 @@ jobs:
           SENDGRID_API_KEY:    ${{ secrets.SENDGRID_API_KEY }}
           SENDGRID_FROM_EMAIL: ${{ secrets.SENDGRID_FROM_EMAIL }}
           ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
-          GM_PORTAL_URL:       ${{ secrets.GM_PORTAL_URL }}
+          # GM_PORTAL_URL intentionally NOT passed — falls back to hardcoded default
+          # in test_gm_email.py / send_reminders.py (https://ramz-gm-select.streamlit.app)
           TEST_EMAIL:          ${{ github.event.inputs.test_email }}
           TEST_STORE_ID:       ${{ github.event.inputs.test_store_id }}
         run: python test_gm_email.py

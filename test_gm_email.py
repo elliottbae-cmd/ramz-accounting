@@ -30,7 +30,7 @@ SENDGRID_FROM_EMAIL = os.environ.get("SENDGRID_FROM_EMAIL", "")
 SUPABASE_URL        = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY        = os.environ.get("SUPABASE_KEY", "")
 ANTHROPIC_KEY       = os.environ.get("ANTHROPIC_API_KEY", "")
-GM_PORTAL_URL       = os.environ.get("GM_PORTAL_URL", "https://ramz-gm-select.streamlit.app")
+GM_PORTAL_URL       = os.environ.get("GM_PORTAL_URL") or "https://ramz-gm-select.streamlit.app"
 
 # --- Sanity checks ---
 missing = [
