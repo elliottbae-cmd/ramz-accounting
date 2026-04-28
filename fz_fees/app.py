@@ -2373,7 +2373,24 @@ elif page == "Store Revenue Bands":
             key="rev_band_email_week",
         )
 
-        if st.button("📧 Email to Team", type="primary", use_container_width=True, key="rev_band_email_btn"):
+        # Two-step flow uses session_state so the preview persists across the
+        # rerun that happens when the user clicks "Confirm & Send" inside the
+        # outer button's block. Without this, Streamlit's rerun model treats
+        # the outer button as un-pressed on the second click and the inner
+        # send code never executes.
+        _email_btn_clicked = st.button(
+            "📧 Email to Team", type="primary", use_container_width=True,
+            key="rev_band_email_btn",
+        )
+        if _email_btn_clicked:
+            st.session_state["rev_band_email_preview_active"] = True
+            st.session_state["rev_band_email_preview_week_choice"] = email_selected
+
+        if st.session_state.get("rev_band_email_preview_active"):
+            # If user has changed week selection while preview is active, refresh
+            email_selected = st.session_state.get(
+                "rev_band_email_preview_week_choice", email_selected
+            )
             idx = email_choices.index(email_selected)
             ew, elabel, estatus = email_week_options[idx]
 
@@ -2658,6 +2675,9 @@ elif page == "Store Revenue Bands":
                             _esb3.table("email_log").insert(log_rows).execute()
                         except Exception as log_e:
                             st.warning(f"Emails sent but log insert failed: {log_e}")
+
+                    # Clear preview flag — next click of "Email to Team" starts fresh
+                    st.session_state["rev_band_email_preview_active"] = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
