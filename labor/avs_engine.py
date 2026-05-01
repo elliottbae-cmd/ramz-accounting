@@ -316,7 +316,8 @@ def _write_weekly_excel(df, report_dates):
             dm_goal += goal_v
             dm_payroll += payroll_v
 
-            row_fill = _fill(OVER_RED) if variance > 0 else _fill(UNDER_GRN) if variance < 0 else _fill(NEUTRAL)
+            # GREEN if within ±30 hrs of goal, RED otherwise (above OR below by >30)
+            row_fill = _fill(UNDER_GRN) if abs(variance) <= 30 else _fill(OVER_RED)
             ws.row_dimensions[row_num].height = 18
 
             vals = [row["Store #"], row["Store Name"], row["DM"], row["Rev Band"],
@@ -373,7 +374,7 @@ def _write_weekly_excel(df, report_dates):
     ws[f"A{row_num}"].value = "Legend"
     ws[f"A{row_num}"].font = Font(name="Arial", size=10, bold=True)
     row_num += 1
-    for hex_c, label in [(OVER_RED, "Over Goal"), (UNDER_GRN, "Under Goal"), (NEUTRAL, "At Goal")]:
+    for hex_c, label in [(UNDER_GRN, "On Target (within ±30 hrs of goal)"), (OVER_RED, "Off Target (more than 30 hrs from goal)")]:
         ws.cell(row=row_num, column=1).fill = _fill(hex_c)
         ws.cell(row=row_num, column=1).border = _thin_border()
         c = ws.cell(row=row_num, column=2, value=label)
@@ -448,7 +449,7 @@ def _write_weekly_excel(df, report_dates):
     wr[f"A{leg_row}"].value = "Legend"
     wr[f"A{leg_row}"].font = Font(name="Arial", size=10, bold=True)
     leg_row += 1
-    for hex_c, label in [(UNDER_GRN, "Under Goal — Best"), (OVER_RED, "Over Goal — Worst"), (NEUTRAL, "At Goal")]:
+    for hex_c, label in [(UNDER_GRN, "On Target (within ±30 hrs of goal)"), (OVER_RED, "Off Target (more than 30 hrs from goal)")]:
         wr.cell(row=leg_row, column=1).fill = _fill(hex_c)
         wr.cell(row=leg_row, column=1).border = _thin_border()
         c = wr.cell(row=leg_row, column=2, value=label)
@@ -517,7 +518,7 @@ def _write_weekly_excel(df, report_dates):
     wdm[f"A{leg_row}"].value = "Legend"
     wdm[f"A{leg_row}"].font = Font(name="Arial", size=10, bold=True)
     leg_row += 1
-    for hex_c, label in [(UNDER_GRN, "Under Goal — Best"), (OVER_RED, "Over Goal — Worst"), (NEUTRAL, "At Goal")]:
+    for hex_c, label in [(UNDER_GRN, "On Target (within ±30 hrs of goal)"), (OVER_RED, "Off Target (more than 30 hrs from goal)")]:
         wdm.cell(row=leg_row, column=1).fill = _fill(hex_c)
         wdm.cell(row=leg_row, column=1).border = _thin_border()
         c = wdm.cell(row=leg_row, column=2, value=label)
