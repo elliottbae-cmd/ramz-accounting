@@ -1,0 +1,77 @@
+{
+  "backup_date": "2026-05-01",
+  "backup_time_utc": "2026-05-01T09:54:43.273471+00:00",
+  "truncated_tables": [],
+  "tables": {
+    "reference_data": {
+      "rows": 41,
+      "file": "backups/2026-05-01/reference_data.csv",
+      "truncated": false
+    },
+    "weekly_locks": {
+      "rows": 397,
+      "file": "backups/2026-05-01/weekly_locks.csv",
+      "truncated": false
+    },
+    "weekly_actuals": {
+      "rows": 185,
+      "file": "backups/2026-05-01/weekly_actuals.csv",
+      "truncated": false
+    },
+    "stores": {
+      "rows": 41,
+      "file": "backups/2026-05-01/stores.csv",
+      "truncated": false
+    },
+    "change_log": {
+      "rows": 11,
+      "file": "backups/2026-05-01/change_log.csv",
+      "truncated": false
+    },
+    "rev_band_submissions": {
+      "rows": 21,
+      "file": "backups/2026-05-01/rev_band_submissions.csv",
+      "truncated": false
+    },
+    "store_sales": {
+      "rows": 1000,
+      "file": "backups/2026-05-01/store_sales.csv",
+      "truncated": false
+    },
+    "store_sos": {
+      "rows": 1000,
+      "file": "backups/2026-05-01/store_sos.csv",
+      "truncated": false
+    },
+    "store_votg": {
+      "rows": 1000,
+      "file": "backups/2026-05-01/store_votg.csv",
+      "truncated": false
+    },
+    "gm_contacts": {
+      "rows": 37,
+      "file": "backups/2026-05-01/gm_contacts.csv",
+      "truncated": false
+    },
+    "dm_list": {
+      "rows": 8,
+      "file": "backups/2026-05-01/dm_list.csv",
+      "truncated": false
+    },
+    "app_settings": {
+      "rows": 7,
+      "file": "backups/2026-05-01/app_settings.csv",
+      "truncated": false
+    },
+    "email_log": {
+      "rows": 129,
+      "file": "backups/2026-05-01/email_log.csv",
+      "truncated": false
+    },
+    "admin_users": {
+      "rows": 1,
+      "file": "backups/2026-05-01/admin_users.csv",
+      "truncated": false
+    }
+  }
+}
