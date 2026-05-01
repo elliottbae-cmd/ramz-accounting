@@ -214,8 +214,9 @@ def detect_bank_date(path: str) -> str | None:
                             return datetime.strptime(raw.strip(), fmt).strftime("%m/%d/%Y")
                         except ValueError:
                             continue
-    except Exception:
-        pass
+    except Exception as e:
+        # Bank-date detection is best-effort — log but don't crash callers.
+        print(f"[WARN] detect_bank_date failed for {path}: {e}")
     return None
 
 

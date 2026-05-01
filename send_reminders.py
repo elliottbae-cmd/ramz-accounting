@@ -794,7 +794,10 @@ def send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
             "current_band":  store.get("revenue_band", "N/A"),
             "selected_band": sub.get("selected_band", "N/A"),
             "location_id":   loc_id,
-            "token":         gm_contacts.get(loc_id, {}).get("token", ""),
+            # SECURITY: use the per-submission dm_token, NOT gm_contacts.token.
+            # The DM portal validates this against rev_band_submissions.dm_token,
+            # which is distinct from the GM's token to prevent privilege escalation.
+            "dm_token":      sub.get("dm_token", ""),
         })
 
     print(f"\nDM Reminders ({day_label}): {len(by_dm)} DM(s) with pending approvals")
@@ -806,9 +809,11 @@ def send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
             print(f"  SKIP  {dm_name} \u2014 no email on file")
             continue
 
-        # Use first pending store's token to build DM portal link
-        token         = next((s["token"] for s in stores if s["token"]), "")
-        dm_portal_url = f"{GM_PORTAL_URL}?token={token}&role=dm" if token else GM_PORTAL_URL
+        # Use first pending store's dm_token to build DM portal link.
+        # If no dm_token (legacy row pre-migration), drop the link rather than
+        # leak a GM token — the DM can still navigate via the portal root.
+        dm_token      = next((s["dm_token"] for s in stores if s.get("dm_token")), "")
+        dm_portal_url = f"{GM_PORTAL_URL}?token={dm_token}&role=dm" if dm_token else GM_PORTAL_URL
 
         subject   = (f"Action Required: {len(stores)} Revenue Band Approval(s) Pending "
                      f"\u2014 {week_label}")
@@ -897,23 +902,28 @@ def main():
             # if no submission exists yet. NEVER reuse gm_contacts.token for the
             # submission row (it's a persistent per-GM token that would collide
             # with prior weeks' submissions on the unique constraint).
+            # SECURITY: dm_token is a SEPARATE token used only by the DM view.
+            # Keeping it distinct from `token` prevents GMs from appending
+            # `?role=dm` to their own URL to access other stores under their DM.
             token = None
             try:
-                existing = sb.table("rev_band_submissions").select("id,token").eq(
+                existing = sb.table("rev_band_submissions").select("id,token,dm_token").eq(
                     "location_id", loc_id
                 ).eq("week_start", str(target_week)).execute()
                 if existing.data:
                     # Submission already exists for this week — use its token
                     token = existing.data[0].get("token")
                 else:
-                    # Generate a fresh unique token and insert
+                    # Generate fresh unique tokens (GM + DM) and insert
                     import uuid
-                    token = str(uuid.uuid4())
+                    token    = str(uuid.uuid4())
+                    dm_token = str(uuid.uuid4())
                     try:
                         sb.table("rev_band_submissions").insert({
                             "location_id": loc_id,
                             "week_start":  str(target_week),
                             "token":       token,
+                            "dm_token":    dm_token,
                             "status":      "pending_gm",
                         }).execute()
                     except Exception:

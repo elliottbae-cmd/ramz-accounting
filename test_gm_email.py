@@ -88,10 +88,25 @@ print(f"Step 1: Creating test submission row")
 print(f"  Token: {test_token}")
 try:
     # Check existing first (in case of repeat test runs)
-    existing = sr.sb.table("rev_band_submissions").select("id,token").eq(
+    existing = sr.sb.table("rev_band_submissions").select("id,token,status").eq(
         "location_id", TEST_STORE_ID
     ).eq("week_start", str(target_week)).execute()
     if existing.data:
+        # SAFETY GUARD: refuse to overwrite a real production submission.
+        # If the row is anything other than pending_gm (i.e. the GM has already
+        # submitted, the DM has already approved, etc.), bail out — running the
+        # test would clobber that state and require recovery from a backup.
+        # RECOVERY_MODE is allowed to bypass this only when intentionally
+        # re-sending to a real GM whose row was manually deleted.
+        existing_status = existing.data[0].get("status", "")
+        if existing_status != "pending_gm" and not RECOVERY_MODE:
+            print(f"ERROR: Submission for {TEST_STORE_ID} on {target_week} already exists "
+                  f"with status={existing_status!r}.")
+            print("       Refusing to overwrite a real production row.")
+            print("       Set RECOVERY_MODE=true only if you're intentionally "
+                  "resending a real email after a manual delete.")
+            sys.exit(1)
+
         # Reuse the existing row's token
         test_token = existing.data[0]["token"]
         print(f"  Reusing existing test submission (token: {test_token})")
@@ -107,6 +122,8 @@ try:
             "status":      "pending_gm",
         }).execute()
         print(f"  Inserted new test submission")
+except SystemExit:
+    raise
 except Exception as e:
     print(f"ERROR: Could not create submission row: {e}")
     sys.exit(1)
