@@ -1,0 +1,43 @@
+name: DM Token / Race Guard Sanity
+
+# Runs the end-to-end check on rev_band_submissions:
+#   - GM token cannot be used to access the DM view (privilege escalation)
+#   - Race guards on submit/approve/reject reject replays
+#
+# Triggers narrowly to keep prod-DB writes minimal:
+#   - push to main when token/race-guard related files change
+#   - manual dispatch before deploying portal changes
+#
+# Writes one row to rev_band_submissions with week_start = 2099-12-31 and
+# deletes it in a finally block. Safe alongside live email runs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "send_reminders.py"
+      - "test_gm_email.py"
+      - "test_dm_token_security.py"
+      - ".github/workflows/test_dm_token_security.yml"
+  workflow_dispatch:
+
+jobs:
+  sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install supabase
+
+      - name: Run sanity test
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python test_dm_token_security.py
