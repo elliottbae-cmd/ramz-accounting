@@ -21,8 +21,17 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 _FZ_DIR = Path(__file__).parent
 _LABOR_DIR = _FZ_DIR.parent / "labor"
+_REPO_ROOT = _FZ_DIR.parent
 sys.path.insert(0, str(_FZ_DIR))
 sys.path.insert(0, str(_LABOR_DIR))
+sys.path.insert(0, str(_REPO_ROOT))
+
+# Sentry — best-effort error reporting; no-op without SENTRY_DSN
+try:
+    from sentry_init import init_sentry
+    init_sentry("ramz-accounting-app")
+except Exception:
+    pass
 
 from reconcile import (
     load_locations, load_fz_schedule, detect_bank_date,

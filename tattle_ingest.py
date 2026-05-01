@@ -24,6 +24,13 @@ import pathlib
 import requests
 from datetime import date, timedelta, datetime, timezone
 
+# Sentry — best-effort error reporting; no-op without SENTRY_DSN
+try:
+    from sentry_init import init_sentry
+    init_sentry("tattle_ingest")
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------

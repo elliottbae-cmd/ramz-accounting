@@ -37,7 +37,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install supabase sendgrid requests
+        run: pip install supabase sendgrid requests sentry-sdk
 
       - name: Send emails
         env:
@@ -47,9 +47,15 @@ jobs:
           SENDGRID_FROM_EMAIL: ${{ secrets.SENDGRID_FROM_EMAIL }}
           # Anthropic Claude API — used for weekly sentiment synthesis in GM emails
           ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+          # Sentry error tracking — no-op if SENTRY_DSN secret not set
+          SENTRY_DSN:          ${{ secrets.SENTRY_DSN }}
           # GM_PORTAL_URL falls back to the default hardcoded in send_reminders.py
           # Set this secret in GitHub if you ever need to override it.
           CEO_EMAIL:           ${{ secrets.CEO_EMAIL }}
+          # OPS_EMAIL receives the post-run heartbeat/failure summary email.
+          # Comma-separated list. Falls back to a default in send_reminders.py
+          # if not set, but you should configure this secret to broaden notifications.
+          OPS_EMAIL:           ${{ secrets.OPS_EMAIL }}
           # Manual dispatch uses the dropdown selection.
           # Scheduled runs auto-detect from day of week.
           EMAIL_MODE:          ${{ github.event.inputs.email_mode || '' }}

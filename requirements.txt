@@ -7,3 +7,4 @@ supabase
 sendgrid
 lightgbm
 numpy
+sentry-sdk>=2.0.0

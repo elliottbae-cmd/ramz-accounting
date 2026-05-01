@@ -38,7 +38,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install requests anthropic
+        run: pip install requests anthropic sentry-sdk
 
       - name: Score pending reviews (scheduled)
         if: github.event_name == 'schedule'
@@ -46,6 +46,7 @@ jobs:
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          SENTRY_DSN:         ${{ secrets.SENTRY_DSN }}
         run: python tattle_sentiment.py --mode pending
 
       - name: Score reviews (workflow_dispatch)
@@ -54,6 +55,7 @@ jobs:
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          SENTRY_DSN:         ${{ secrets.SENTRY_DSN }}
         run: python tattle_sentiment.py --mode ${{ github.event.inputs.mode }}
 
       - name: Score recent reviews (workflow_dispatch)
@@ -62,4 +64,5 @@ jobs:
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          SENTRY_DSN:         ${{ secrets.SENTRY_DSN }}
         run: python tattle_sentiment.py --mode recent --days ${{ github.event.inputs.days }}

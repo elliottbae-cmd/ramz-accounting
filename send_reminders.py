@@ -23,6 +23,13 @@ import json
 import requests
 from datetime import date, timedelta, datetime, timezone
 
+# Sentry — best-effort error reporting; no-op without SENTRY_DSN
+try:
+    from sentry_init import init_sentry
+    init_sentry("send_reminders")
+except Exception:
+    pass
+
 # ── Dependencies ─────────────────────────────────────────────────────────────
 try:
     from supabase import create_client
@@ -47,6 +54,10 @@ GM_PORTAL_URL    = os.environ.get("GM_PORTAL_URL") or "https://ramz-gm-select.st
 CEO_EMAIL        = os.environ.get("CEO_EMAIL", "")
 EMAIL_MODE       = os.environ.get("EMAIL_MODE", "").strip().lower()
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
+# OPS_EMAIL receives a post-run summary (heartbeat + failure detail).
+# Comma-separated list. Defaults to the primary admin so we never silently
+# skip notifying anyone in a fresh deploy.
+OPS_EMAIL        = os.environ.get("OPS_EMAIL", "elliottbae@gmail.com")
 
 if not all([SUPABASE_URL, SUPABASE_KEY, SENDGRID_API_KEY]):
     print("ERROR: Missing required env vars (SUPABASE_URL, SUPABASE_KEY, SENDGRID_API_KEY)")
@@ -762,21 +773,27 @@ def send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
     """
     Send approval reminder emails to DMs with pending_dm submissions.
     Only fires Monday and Tuesday at 8AM CT.
+
+    Returns a dict {sent, failed, failures: [(dm_name, dm_email, error_msg)]}
+    so the caller can include DM-side counts in the run summary email.
     """
+    result = {"sent": 0, "failed": 0, "failures": [], "fired": False}
+
     today   = date.today()
     weekday = today.weekday()   # 0=Mon, 1=Tue
     if weekday not in (0, 1):
-        return
+        return result
 
     current_hour = _current_ct_hour()
     if current_hour != 8:
-        return
+        return result
 
+    result["fired"] = True
     day_label    = "Monday" if weekday == 0 else "Tuesday"
     pending_subs = load_pending_dm_submissions(target_week)
     if not pending_subs:
         print(f"\nDM Reminders ({day_label}): No pending_dm submissions — nothing to send.")
-        return
+        return result
 
     # Build store lookup
     store_lookup = {r["location_id"]: r for r in ref_data}
@@ -802,11 +819,12 @@ def send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
 
     print(f"\nDM Reminders ({day_label}): {len(by_dm)} DM(s) with pending approvals")
 
-    sent = failed = 0
     for dm_name, stores in by_dm.items():
         dm_email = dm_emails.get(dm_name, "")
         if not dm_email:
             print(f"  SKIP  {dm_name} \u2014 no email on file")
+            result["failures"].append((dm_name, "(no email)", "no email on file"))
+            result["failed"] += 1
             continue
 
         # Use first pending store's dm_token to build DM portal link.
@@ -828,17 +846,152 @@ def send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
                       f"dm_reminder_{day_label.lower()}", success,
                       recipient_type="dm")
             if success:
-                sent += 1
+                result["sent"] += 1
             else:
-                failed += 1
+                result["failed"] += 1
+                result["failures"].append((dm_name, dm_email, "SendGrid returned non-2xx"))
         except Exception as e:
             print(f"  ERROR  {dm_name} \u2192 {dm_email} | {e}")
             log_email(target_week, stores[0]["location_id"], dm_email, subject,
                       f"dm_reminder_{day_label.lower()}", False, str(e),
                       recipient_type="dm")
-            failed += 1
+            result["failed"] += 1
+            result["failures"].append((dm_name, dm_email, str(e)))
 
-    print(f"DM Reminders done. {sent} sent | {failed} failed")
+    print(f"DM Reminders done. {result['sent']} sent | {result['failed']} failed")
+    return result
+
+
+# ── Run summary / heartbeat email ─────────────────────────────────────────────
+def build_summary_html(mode, week_label, target_week, summary):
+    """Build a plain branded HTML summary of the run."""
+    gm_sent     = summary.get("gm_sent", 0)
+    gm_failed   = summary.get("gm_failed", 0)
+    gm_skipped  = summary.get("gm_skipped", 0)
+    dm_fired    = summary.get("dm_fired", False)
+    dm_sent     = summary.get("dm_sent", 0)
+    dm_failed   = summary.get("dm_failed", 0)
+    sent_ts     = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    # Failure detail lists
+    def _rows(items, cols):
+        if not items:
+            return ""
+        body = ""
+        for i, row in enumerate(items):
+            bg = "#f9f9f9" if i % 2 == 0 else "#ffffff"
+            cells = "".join(
+                f'<td style="padding:6px 10px;font-size:13px;color:#333;">{c}</td>'
+                for c in row
+            )
+            body += f'<tr style="background:{bg};">{cells}</tr>'
+        head = "".join(
+            f'<td style="padding:6px 10px;font-size:13px;font-weight:bold;'
+            f'color:#fff;background:#2B3A4E;">{c}</td>' for c in cols
+        )
+        return (f'<table cellspacing="0" cellpadding="0" '
+                f'style="border-collapse:collapse;margin:8px 0;width:100%;">'
+                f'<tr>{head}</tr>{body}</table>')
+
+    gm_failure_table = _rows(summary.get("gm_failures", []),
+                             ["Store", "Recipient", "Error"])
+    gm_skipped_table = _rows([(s,) for s in summary.get("gm_skipped_stores", [])],
+                             ["Store skipped (no GM email on file)"])
+    dm_failure_table = _rows(summary.get("dm_failures", []),
+                             ["DM", "Recipient", "Error"])
+
+    # Status banner color
+    if gm_failed > 0 or dm_failed > 0:
+        banner_bg, banner_label = "#C62828", "Failures detected"
+    elif gm_skipped > 0:
+        banner_bg, banner_label = "#E67E22", "Run completed with skips"
+    else:
+        banner_bg, banner_label = "#2E7D32", "Run completed cleanly"
+
+    sentiment_note = ""
+    if summary.get("sentiment_no_api_key"):
+        sentiment_note = ("<p style='color:#E67E22;font-size:13px;'>"
+                          "ANTHROPIC_KEY not set — emails sent without "
+                          "sentiment summaries.</p>")
+    elif summary.get("sentiment_failures", 0) > 0:
+        sentiment_note = (f"<p style='color:#E67E22;font-size:13px;'>"
+                          f"Sentiment synthesis failed for "
+                          f"{summary['sentiment_failures']} store(s) "
+                          f"(Claude API error). Emails sent without sentiment.</p>")
+
+    dm_section = ""
+    if dm_fired:
+        dm_section = f"""
+        <h3 style="color:#2B3A4E;margin-top:20px;">DM Approval Reminders</h3>
+        <p style="color:#333;font-size:14px;">Sent: <strong>{dm_sent}</strong>
+            &nbsp;|&nbsp; Failed: <strong>{dm_failed}</strong></p>
+        {dm_failure_table}
+        """
+
+    return f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:20px 0;">
+<tr><td align="center">
+<table width="640" cellpadding="0" cellspacing="0"
+       style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1);">
+  <tr><td style="background:#2B3A4E;padding:20px 28px;">
+    <h2 style="margin:0;color:#C49A5C;">Ram-Z Reminder Run Summary</h2>
+    <p style="margin:4px 0 0;color:#fff;font-size:13px;">
+      Mode: <strong>{mode}</strong> &nbsp;|&nbsp; Week: <strong>{week_label}</strong>
+      &nbsp;|&nbsp; Run at: {sent_ts}
+    </p>
+  </td></tr>
+  <tr><td style="background:{banner_bg};padding:10px 28px;color:#fff;font-weight:bold;">
+    {banner_label}
+  </td></tr>
+  <tr><td style="padding:24px 28px;">
+    <h3 style="color:#2B3A4E;margin-top:0;">GM Reminder Emails</h3>
+    <p style="color:#333;font-size:14px;">Sent: <strong>{gm_sent}</strong>
+        &nbsp;|&nbsp; Failed: <strong>{gm_failed}</strong>
+        &nbsp;|&nbsp; Skipped: <strong>{gm_skipped}</strong></p>
+    {gm_failure_table}
+    {gm_skipped_table}
+    {sentiment_note}
+    {dm_section}
+    <p style="color:#999;font-size:11px;margin-top:24px;">
+      This is an automated run summary. If you don't see one of these for an
+      expected send window (Mon/Tue/Wed afternoons CT), the cron job did not fire.
+    </p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
+
+
+def send_run_summary(mode, week_label, target_week, summary):
+    """Send a heartbeat/summary email to OPS_EMAIL after every run."""
+    ops_emails = [e.strip() for e in (OPS_EMAIL or "").split(",") if e.strip()]
+    if not ops_emails:
+        print("  [WARN] OPS_EMAIL not set — skipping run summary email.")
+        return
+
+    gm_sent    = summary.get("gm_sent", 0)
+    gm_failed  = summary.get("gm_failed", 0)
+    gm_skipped = summary.get("gm_skipped", 0)
+    dm_failed  = summary.get("dm_failed", 0)
+
+    if gm_failed > 0 or dm_failed > 0:
+        prefix = "[FAIL]"
+    elif gm_skipped > 0:
+        prefix = "[WARN]"
+    else:
+        prefix = "[OK]"
+
+    subject = (f"{prefix} Ram-Z Reminders {mode}: {gm_sent} sent, "
+               f"{gm_failed} failed, {gm_skipped} skipped — {week_label}")
+    html = build_summary_html(mode, week_label, target_week, summary)
+
+    for email in ops_emails:
+        try:
+            send_email(email, subject, html)
+            print(f"  [OK] Run summary sent to {email}")
+        except Exception as e:
+            print(f"  [WARN] Could not send run summary to {email}: {e}")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -869,6 +1022,16 @@ def main():
 
     pending_stores = [r for r in ref_data if r["location_id"] not in submitted_ids]
 
+    # Run-summary state — always populated, sent as a heartbeat email at the end
+    summary = {
+        "gm_sent": 0, "gm_failed": 0, "gm_skipped": 0,
+        "gm_failures": [],          # [(store, recipient, error)]
+        "gm_skipped_stores": [],    # [store_name]
+        "sentiment_failures": 0,
+        "sentiment_no_api_key": False,
+        "dm_fired": False, "dm_sent": 0, "dm_failed": 0, "dm_failures": [],
+    }
+
     if not pending_stores:
         print("\u2713 All stores have submitted. No GM emails needed.")
         # DM reminders may still be needed — fall through
@@ -895,6 +1058,7 @@ def main():
             if not gm_email:
                 print(f"  SKIP  {store_name} ({loc_id}) \u2014 no GM email on file")
                 skipped += 1
+                summary["gm_skipped_stores"].append(f"{store_name} ({loc_id})")
                 continue
 
             # Determine the submission token for this (store, week).
@@ -1010,11 +1174,14 @@ def main():
                     sent_count += 1
                 else:
                     failed_count += 1
+                    summary["gm_failures"].append(
+                        (store_name, gm_email, "SendGrid returned non-2xx"))
             except Exception as e:
                 print(f"  ERROR  {store_name} \u2192 {gm_email} | {e}")
                 log_email(target_week, loc_id, gm_email, subject, mode, False, str(e),
                           recipient_type="gm")
                 failed_count += 1
+                summary["gm_failures"].append((store_name, gm_email, str(e)))
 
         print(f"\nDone. {sent_count} sent | {failed_count} failed | {skipped} skipped (no email on file).")
 
@@ -1039,11 +1206,29 @@ def main():
             print(f"\n\u2139\ufe0f  Sentiment skipped for {sentiment_missing_data} store(s) "
                   f"(no Tattle reviews for the week \u2014 expected for low-volume stores).")
 
-        if failed_count > 0:
-            sys.exit(1)
+        # Snapshot the loop counters into the summary dict
+        summary["gm_sent"]              = sent_count
+        summary["gm_failed"]            = failed_count
+        summary["gm_skipped"]           = skipped
+        summary["sentiment_failures"]   = sentiment_failures
+        summary["sentiment_no_api_key"] = sentiment_no_api_key
 
     # DM approval reminders — Mon/Tue 8AM CT, runs regardless of GM email status
-    send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
+    dm_result = send_dm_reminders(target_week, week_label, ref_data, gm_contacts, dm_emails)
+    summary["dm_fired"]    = dm_result.get("fired", False)
+    summary["dm_sent"]     = dm_result.get("sent", 0)
+    summary["dm_failed"]   = dm_result.get("failed", 0)
+    summary["dm_failures"] = dm_result.get("failures", [])
+
+    # Heartbeat / failure-detail email — always sent, even on a clean run.
+    # If you stop seeing these for an expected window (Mon/Tue/Wed CT
+    # afternoons, plus the Friday initial), the cron didn't fire.
+    print()
+    send_run_summary(mode, week_label, target_week, summary)
+
+    # Non-zero exit AFTER the summary email so failures still notify.
+    if summary["gm_failed"] > 0 or summary["dm_failed"] > 0:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

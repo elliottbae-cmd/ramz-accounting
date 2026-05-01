@@ -43,7 +43,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests sentry-sdk
 
       - name: Run weekly ingestion (scheduled)
         if: github.event_name == 'schedule'
@@ -52,6 +52,7 @@ jobs:
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           TATTLE_CLIENT_KEY:  ${{ secrets.TATTLE_CLIENT_KEY }}
           TATTLE_SECRET_KEY:  ${{ secrets.TATTLE_SECRET_KEY }}
+          SENTRY_DSN:         ${{ secrets.SENTRY_DSN }}
         run: python tattle_ingest.py --mode weekly
 
       - name: Run manual ingestion (workflow_dispatch)
@@ -61,6 +62,7 @@ jobs:
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           TATTLE_CLIENT_KEY:  ${{ secrets.TATTLE_CLIENT_KEY }}
           TATTLE_SECRET_KEY:  ${{ secrets.TATTLE_SECRET_KEY }}
+          SENTRY_DSN:         ${{ secrets.SENTRY_DSN }}
         run: python tattle_ingest.py --mode ${{ github.event.inputs.mode }}
 
       - name: Run custom date range (workflow_dispatch)
@@ -70,6 +72,7 @@ jobs:
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           TATTLE_CLIENT_KEY:  ${{ secrets.TATTLE_CLIENT_KEY }}
           TATTLE_SECRET_KEY:  ${{ secrets.TATTLE_SECRET_KEY }}
+          SENTRY_DSN:         ${{ secrets.SENTRY_DSN }}
         run: |
           python tattle_ingest.py \
             --mode custom \
