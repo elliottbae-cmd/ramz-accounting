@@ -490,7 +490,13 @@ def _safe_float(val, default=0.0):
 
 
 def save_weekly_actuals(week_start, df):
-    """Save per-store actual hours for a week. df must have location_id, actual_hours, etc."""
+    """Save per-store actual hours for a week. df must have location_id, actual_hours, etc.
+
+    `loaded_payroll` is persisted alongside `labor_pct` so that downstream
+    code (and manual overrides like a sales correction) can recompute the
+    ratio without re-running the entire AVS pipeline. If the source df
+    doesn't carry it, we fall back to None — the column is nullable.
+    """
     try:
         sb = get_supabase()
         week_str = str(week_start)
@@ -500,11 +506,12 @@ def save_weekly_actuals(week_start, df):
             rows.append({
                 "week_start": week_str,
                 "location_id": row["location_id"],
-                "actual_hours": _safe_float(row.get("actual_hours")),
-                "hourly_goal": _safe_float(row.get("hourly_goal")),
-                "variance":    _safe_float(row.get("variance")),
-                "net_sales":   _safe_float(row.get("net_sales")),
-                "labor_pct":   _safe_float(row.get("labor_pct")),
+                "actual_hours":  _safe_float(row.get("actual_hours")),
+                "hourly_goal":   _safe_float(row.get("hourly_goal")),
+                "variance":      _safe_float(row.get("variance")),
+                "net_sales":     _safe_float(row.get("net_sales")),
+                "labor_pct":     _safe_float(row.get("labor_pct")),
+                "loaded_payroll": _safe_float(row.get("loaded_payroll")),
             })
 
         if rows:
@@ -520,17 +527,19 @@ def load_weekly_actuals():
     """Load all weekly actuals. Returns a DataFrame."""
     sb = get_supabase()
     resp = sb.table("weekly_actuals").select(
-        "week_start, location_id, actual_hours, hourly_goal, variance, net_sales, labor_pct"
+        "week_start, location_id, actual_hours, hourly_goal, variance, "
+        "net_sales, labor_pct, loaded_payroll"
     ).order("week_start").execute()
     if resp.data:
         df = pd.DataFrame(resp.data)
-        for col in ["actual_hours", "hourly_goal", "variance", "net_sales", "labor_pct"]:
+        for col in ["actual_hours", "hourly_goal", "variance",
+                    "net_sales", "labor_pct", "loaded_payroll"]:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
         df["week_start"] = df["week_start"].astype(str)
         return df
     return pd.DataFrame(columns=[
         "week_start", "location_id", "actual_hours", "hourly_goal",
-        "variance", "net_sales", "labor_pct",
+        "variance", "net_sales", "labor_pct", "loaded_payroll",
     ])
 
 
