@@ -835,6 +835,7 @@ ALL_PAGES = {
         "Upload SoS",
         "Upload VOTG",
         "Sales Forecasts",
+        "Forecast Accuracy",
         "Sales Scenario Analysis",
     ],
 }
@@ -4471,6 +4472,261 @@ elif page == "Sales Forecasts":
                 st.success(f"✅ Back-test complete — updated {_n} store forecast rows.")
                 st.cache_data.clear()
                 st.rerun()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: Forecast Accuracy  (Admin)
+# Tracks week-over-week sales-forecast model performance using the back-tested
+# rows in sales_forecasts (where Phase 2 of monday_job.py has filled in
+# actual_sales, forecast_error, band_hit, etc.).
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Forecast Accuracy":
+    if not user_is_admin:
+        st.error("You do not have permission to access this page.")
+        st.stop()
+
+    st.title("📊 Forecast Accuracy")
+    st.caption(
+        "Week-over-week tracking of how the sales-forecast model is performing. "
+        "Populated automatically from sales_forecasts rows once the Monday job "
+        "back-fills actuals (Phase 2)."
+    )
+
+    import altair as alt
+    from supabase_db import get_supabase as _fa_get_sb
+    _fa_sb = _fa_get_sb()
+
+    # ── Load all back-tested forecast rows (cached) ───────────────────────
+    @st.cache_data(ttl=300)
+    def _load_backtested_forecasts():
+        sb = _fa_get_sb()
+        # Pull forecast rows where actual_sales has been filled in by Phase 2.
+        # We don't filter on forecast_error directly because zero error is a
+        # legitimate value — actual_sales not-null is the right signal.
+        resp = sb.table("sales_forecasts").select(
+            "location_id,store_name,week_start,model_version,"
+            "forecast_point,forecast_low,forecast_high,recommended_band,"
+            "actual_sales,forecast_error,forecast_error_pct,band_hit,"
+            "within_confidence_interval"
+        ).not_.is_("actual_sales", "null").execute()
+        return pd.DataFrame(resp.data or [])
+
+    _fa_df = _load_backtested_forecasts()
+    if _fa_df.empty:
+        st.info(
+            "No back-tested forecasts yet. Once the Monday job (Phase 2) fills "
+            "in actuals for a completed week, the metrics will populate here."
+        )
+        st.stop()
+
+    # ── Coerce types + derive helpers ─────────────────────────────────────
+    _fa_df["week_start"] = pd.to_datetime(_fa_df["week_start"])
+    for _c in ("forecast_point", "forecast_low", "forecast_high",
+               "actual_sales", "forecast_error", "forecast_error_pct"):
+        if _c in _fa_df.columns:
+            _fa_df[_c] = pd.to_numeric(_fa_df[_c], errors="coerce")
+    _fa_df["abs_error_pct"] = _fa_df["forecast_error_pct"].abs()
+
+    # Attribute each row to the DM at lock time. Fall back to current
+    # reference_data DM where the lock is missing (e.g., very old back-tests).
+    try:
+        _locks_resp = _fa_sb.table("weekly_locks").select(
+            "location_id,week_start,dm"
+        ).eq("status", "locked").execute()
+        _locks_df = pd.DataFrame(_locks_resp.data or [])
+    except Exception:
+        _locks_df = pd.DataFrame()
+
+    if not _locks_df.empty:
+        _locks_df["week_start"] = pd.to_datetime(_locks_df["week_start"])
+        _locks_df = _locks_df.rename(columns={"dm": "_locked_dm"})
+        _fa_df = _fa_df.merge(
+            _locks_df[["location_id", "week_start", "_locked_dm"]],
+            on=["location_id", "week_start"], how="left",
+        )
+    else:
+        _fa_df["_locked_dm"] = pd.NA
+
+    _fa_ref = _cached_reference_data()
+    _fa_dm_lookup = (dict(zip(_fa_ref["location_id"], _fa_ref["dm"]))
+                     if not _fa_ref.empty and "dm" in _fa_ref.columns else {})
+    _fa_df["dm"] = (
+        _fa_df["_locked_dm"]
+        .fillna(_fa_df["location_id"].map(_fa_dm_lookup))
+        .fillna("Unknown")
+    )
+
+    # ── Headline scorecard (last 4 completed weeks) ───────────────────────
+    _last_4 = sorted(_fa_df["week_start"].unique())[-4:]
+    _recent = _fa_df[_fa_df["week_start"].isin(_last_4)]
+
+    st.subheader(f"Last {len(_last_4)} Week(s) — Aggregate")
+    _c1, _c2, _c3, _c4 = st.columns(4)
+
+    _med_mape  = _recent["abs_error_pct"].median()
+    _band_acc  = (_recent["band_hit"].mean() * 100
+                  if _recent["band_hit"].notna().any() else None)
+    _ci_acc    = (_recent["within_confidence_interval"].mean() * 100
+                  if _recent["within_confidence_interval"].notna().any() else None)
+    _bias      = _recent["forecast_error_pct"].mean()
+
+    _c1.metric("Median MAPE", f"{_med_mape:.1f}%" if pd.notna(_med_mape) else "—",
+               help="Median absolute % error across all store-weeks.")
+    _c2.metric("Band Accuracy",
+               f"{_band_acc:.0f}%" if _band_acc is not None and pd.notna(_band_acc) else "—",
+               help="% of store-weeks where the recommended band matched the actual band.")
+    _c3.metric("Within Confidence Interval",
+               f"{_ci_acc:.0f}%" if _ci_acc is not None and pd.notna(_ci_acc) else "—",
+               help="% of store-weeks where actual sales fell inside the forecast low/high range.")
+    _c4.metric("Bias", f"{_bias:+.1f}%" if pd.notna(_bias) else "—",
+               help="Mean signed % error. Positive = model under-forecasts. "
+                    "Negative = model over-forecasts.")
+
+    st.divider()
+
+    # ── Weekly trend chart ────────────────────────────────────────────────
+    st.subheader("Weekly Trend")
+    _weekly = _fa_df.groupby("week_start").agg(
+        median_mape=("abs_error_pct", "median"),
+        band_hit_rate=("band_hit",
+                       lambda s: s.mean() * 100 if s.notna().any() else None),
+        ci_hit_rate=("within_confidence_interval",
+                     lambda s: s.mean() * 100 if s.notna().any() else None),
+        bias=("forecast_error_pct", "mean"),
+        n_stores=("location_id", "count"),
+    ).reset_index()
+
+    # Dominant model_version per week → vertical markers when retrains occur
+    _model_per_week = _fa_df.groupby("week_start")["model_version"].agg(
+        lambda s: s.mode().iloc[0] if not s.mode().empty else None
+    ).reset_index()
+    _weekly = _weekly.merge(_model_per_week, on="week_start").sort_values("week_start")
+    _weekly["model_changed"] = _weekly["model_version"].ne(
+        _weekly["model_version"].shift()
+    )
+    _weekly.loc[_weekly.index.min(), "model_changed"] = False
+    _retrain_weeks = _weekly.loc[_weekly["model_changed"], "week_start"].tolist()
+
+    _metric_choice = st.radio(
+        "Metric",
+        ["Median MAPE", "Band Accuracy", "Within Confidence Interval", "Bias"],
+        horizontal=True, key="fa_metric",
+    )
+    _metric_col_map = {
+        "Median MAPE": ("median_mape", "Median MAPE (%)", False),
+        "Band Accuracy": ("band_hit_rate", "Band Accuracy (%)", True),
+        "Within Confidence Interval": ("ci_hit_rate", "Within CI (%)", True),
+        "Bias": ("bias", "Bias (signed %)", True),
+    }
+    _y_col, _y_label, _higher_better = _metric_col_map[_metric_choice]
+
+    _line = alt.Chart(_weekly).mark_line(
+        point=True, color="#C49A5C", strokeWidth=2,
+    ).encode(
+        x=alt.X("week_start:T", title="Week (Thu start)"),
+        y=alt.Y(f"{_y_col}:Q", title=_y_label),
+        tooltip=[
+            alt.Tooltip("week_start:T", title="Week"),
+            alt.Tooltip("median_mape:Q", title="Median MAPE %", format=".1f"),
+            alt.Tooltip("band_hit_rate:Q", title="Band Acc %", format=".0f"),
+            alt.Tooltip("ci_hit_rate:Q", title="Within CI %", format=".0f"),
+            alt.Tooltip("bias:Q", title="Bias %", format=".2f"),
+            alt.Tooltip("n_stores:Q", title="Stores"),
+            alt.Tooltip("model_version:N", title="Model"),
+        ],
+    ).properties(height=320)
+
+    _chart = _line
+    if _retrain_weeks:
+        _rt_df = pd.DataFrame({"week_start": _retrain_weeks})
+        _rules = alt.Chart(_rt_df).mark_rule(
+            color="#2B3A4E", strokeDash=[4, 4],
+        ).encode(
+            x="week_start:T",
+            tooltip=[alt.Tooltip("week_start:T", title="Retrain week")],
+        )
+        _chart = _line + _rules
+
+    st.altair_chart(_chart, use_container_width=True)
+    if _retrain_weeks:
+        st.caption(
+            f"Vertical dashed lines mark model retrains "
+            f"({len(_retrain_weeks)} detected). Compare the trend before vs "
+            f"after to see whether the new model improved performance."
+        )
+    else:
+        st.caption("Only one model version in the data so far — retrain "
+                   "markers will appear here on the next monthly retrain.")
+
+    st.divider()
+
+    # ── Per-store breakdown ──────────────────────────────────────────────
+    st.subheader("Per-Store Accuracy")
+    _store_stats = _fa_df.groupby(["location_id", "store_name"]).agg(
+        weeks=("week_start", "nunique"),
+        median_mape=("abs_error_pct", "median"),
+        bias=("forecast_error_pct", "mean"),
+        band_hit_rate=("band_hit",
+                       lambda s: s.mean() * 100 if s.notna().any() else None),
+    ).reset_index().sort_values("median_mape", ascending=False)
+
+    _store_disp = _store_stats.copy()
+    _store_disp["median_mape"] = _store_disp["median_mape"].apply(
+        lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
+    _store_disp["bias"] = _store_disp["bias"].apply(
+        lambda x: f"{x:+.1f}%" if pd.notna(x) else "—")
+    _store_disp["band_hit_rate"] = _store_disp["band_hit_rate"].apply(
+        lambda x: f"{x:.0f}%" if pd.notna(x) else "—")
+    _store_disp = _store_disp.rename(columns={
+        "location_id": "Store #", "store_name": "Store",
+        "weeks": "Weeks", "median_mape": "Median MAPE",
+        "bias": "Bias", "band_hit_rate": "Band Acc",
+    })
+
+    if len(_store_stats) >= 5:
+        _worst = _store_stats.head(5)
+        _best  = _store_stats.tail(5).iloc[::-1]
+        _wc, _bc = st.columns(2)
+        with _wc:
+            st.markdown("**Worst 5 (highest MAPE)**")
+            st.dataframe(
+                _store_disp.head(5)[["Store #", "Store", "Median MAPE", "Band Acc"]],
+                use_container_width=True, hide_index=True,
+            )
+        with _bc:
+            st.markdown("**Best 5 (lowest MAPE)**")
+            st.dataframe(
+                _store_disp.tail(5).iloc[::-1][["Store #", "Store", "Median MAPE", "Band Acc"]],
+                use_container_width=True, hide_index=True,
+            )
+
+    st.markdown("**Full breakdown (sortable)**")
+    st.dataframe(_store_disp, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── DM rollup (uses DM at lock time, not current assignment) ─────────
+    st.subheader("DM Rollup")
+    st.caption("DM attribution uses the locked-config DM for each week — "
+               "DM reassignments don't retroactively change historical accuracy.")
+    _dm_stats = _fa_df.groupby("dm").agg(
+        stores=("location_id", "nunique"),
+        weeks=("week_start", "nunique"),
+        median_mape=("abs_error_pct", "median"),
+        band_hit_rate=("band_hit",
+                       lambda s: s.mean() * 100 if s.notna().any() else None),
+    ).reset_index().sort_values("median_mape")
+
+    _dm_disp = _dm_stats.copy()
+    _dm_disp["median_mape"] = _dm_disp["median_mape"].apply(
+        lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
+    _dm_disp["band_hit_rate"] = _dm_disp["band_hit_rate"].apply(
+        lambda x: f"{x:.0f}%" if pd.notna(x) else "—")
+    _dm_disp = _dm_disp.rename(columns={
+        "dm": "DM", "stores": "Stores", "weeks": "Weeks",
+        "median_mape": "Median MAPE", "band_hit_rate": "Band Acc",
+    })
+    st.dataframe(_dm_disp, use_container_width=True, hide_index=True)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: Sales Scenario Analysis  (Admin)
