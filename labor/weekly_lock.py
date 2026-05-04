@@ -89,9 +89,22 @@ def ensure_current_week_locked(ref_data, band_goals, ref_date=None):
     prev_locked = load_locked_config(prev_week)
 
     if prev_locked is not None:
-        # Carry forward previous week's locked values
+        # Carry forward previous week's locked values for revenue_band and
+        # hourly_goal (those are weekly business decisions that should freeze).
+        # The DM column is intentionally REFRESHED from current ref_data — a
+        # DM is an org-structure field that should follow current assignments
+        # rather than perpetually inheriting whatever DM was on the very first
+        # locked week. Without this refresh, DM reassignments never propagate
+        # to future weeks unless someone hand-creates a draft.
         source = "auto-carry-forward"
         lock_ref = prev_locked.copy()
+
+        # Refresh DM from current ref_data — keep prior DM only for stores
+        # that no longer appear in ref_data (e.g., deactivated since last lock).
+        if ref_data is not None and not ref_data.empty and "dm" in ref_data.columns:
+            dm_lookup = dict(zip(ref_data["location_id"], ref_data["dm"]))
+            lock_ref["dm"] = lock_ref["location_id"].map(dm_lookup).fillna(lock_ref["dm"])
+
         # Use current band_goals in case goals were updated
         lock_band_goals = {}
         for _, row in lock_ref.iterrows():
