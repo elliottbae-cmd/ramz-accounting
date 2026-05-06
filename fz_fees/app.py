@@ -2751,6 +2751,18 @@ elif page == "DM Assignments":
 
     st.divider()
 
+    # --- DM filter (applies to both tables below) ---
+    dm_filter_options = ["All"] + dm_list
+    dm_filter = st.selectbox(
+        "Filter by DM",
+        dm_filter_options,
+        key="dm_assignments_dm_filter",
+        help="Narrow both tables below to a single DM's stores. "
+             "Default 'All' shows every store.",
+    )
+
+    st.divider()
+
     # --- Store Active / Inactive Toggle ---
     st.subheader("Active Stores")
     st.caption("Inactive stores are excluded from all AVS reports. Use this to remove stores that are closed, corporate, or not yet part of tracking.")
@@ -2761,6 +2773,12 @@ elif page == "DM Assignments":
     if all_ref_df.empty:
         st.error("No reference data found.")
         st.stop()
+
+    # Apply DM filter (treat NaN/empty as "no DM" — shown only when "All" selected)
+    if dm_filter != "All":
+        all_ref_df = all_ref_df[all_ref_df["dm"].fillna("") == dm_filter].reset_index(drop=True)
+        if all_ref_df.empty:
+            st.info(f"No stores currently assigned to {dm_filter}.")
 
     active_changes = {}
     hdr1, hdr2, hdr3, hdr4 = st.columns([2, 4, 2, 2])
@@ -2809,6 +2827,13 @@ elif page == "DM Assignments":
     if not dm_list:
         st.warning("No DMs defined. Add DMs above first.")
         st.stop()
+
+    # Apply the same DM filter selected at the top of the page
+    if dm_filter != "All":
+        ref_df = ref_df[ref_df["dm"].fillna("") == dm_filter].reset_index(drop=True)
+        if ref_df.empty:
+            st.info(f"No active stores currently assigned to {dm_filter}.")
+            st.stop()
 
     with st.form("dm_assignments_form"):
         new_dms = {}
