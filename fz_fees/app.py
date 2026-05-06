@@ -428,21 +428,40 @@ def _mark_upload_status(week_start_str: str, **flags):
 # ---------------------------------------------------------------------------
 # Shared UI Helpers
 # ---------------------------------------------------------------------------
-def _period_filter(locked_weeks, key_prefix):
-    """Render a period filter (Current Week/All/Month/Quarter/Year) and return filtered week list."""
+def _period_filter(locked_weeks, key_prefix, default_label="Current Week"):
+    """Render a period filter (Current/Prior Week/All/Month/Quarter/Year) and return filtered week list.
+
+    `default_label` controls how the most-recent-week option is presented:
+      - "Current Week": picks the absolute max week_start in the dataset
+        (used by Compliance, which tracks live in-progress submissions).
+      - "Prior Week":   picks the most recent COMPLETED Thu–Wed week
+        (used by Hit/Miss style reports that need actuals to be meaningful).
+    """
+    state_key = f"{key_prefix}_period"
+    valid_options = [default_label, "All Weeks", "Month", "Quarter", "Year"]
+    # Clear stale session_state if the cached value isn't a current option
+    # (happens once per user when default_label changes between deploys).
+    if state_key in st.session_state and st.session_state[state_key] not in valid_options:
+        del st.session_state[state_key]
+
     col_period, col_period_val = st.columns(2)
     with col_period:
         period_filter = st.selectbox(
-            "View by", ["Current Week", "All Weeks", "Month", "Quarter", "Year"],
-            key=f"{key_prefix}_period",
+            "View by", valid_options, key=state_key,
         )
     with col_period_val:
-        if period_filter == "Current Week":
-            # Most recent completed week in the dataset
-            last_week = max(locked_weeks) if locked_weeks else None
+        if period_filter == default_label:
+            if default_label == "Prior Week":
+                current_thu = get_week_start(date.today())
+                pool = [w for w in locked_weeks if w < current_thu]
+            else:
+                pool = list(locked_weeks)
+            last_week = max(pool) if pool else None
             filtered_weeks = [last_week] if last_week else []
             if last_week:
                 st.caption(f"Week of {last_week}")
+            elif default_label == "Prior Week":
+                st.caption("No completed weeks in dataset yet.")
         elif period_filter == "Month":
             months_available = sorted(set((w.year, w.month) for w in locked_weeks))
             month_labels = [f"{y}-{m:02d}" for y, m in months_available]
@@ -3656,12 +3675,23 @@ elif page == "Rev Band Report":
         st.stop()
 
     # --- Build week list from submissions ---
+    # Hit/Miss is only meaningful against COMPLETED weeks (where actuals exist).
+    # Exclude the in-progress and future weeks here so every period view —
+    # Prior Week, All Weeks, Month, Quarter, Year — is consistent and won't
+    # show rows with $nan actuals for weeks that haven't happened yet.
+    _current_thu = get_week_start(date.today())
     all_week_dates = sorted(
-        {pd.Timestamp(w).date() for w in all_subs["week_start"].dropna().unique()},
+        w for w in {pd.Timestamp(w).date() for w in all_subs["week_start"].dropna().unique()}
+        if w < _current_thu
     )
 
+    if not all_week_dates:
+        st.info("No completed weeks yet. This report populates after the first Thu–Wed week closes.")
+        st.stop()
+
     # --- Period filter ---
-    filtered_week_dates = _period_filter(all_week_dates, "revband")
+    filtered_week_dates = _period_filter(all_week_dates, "revband",
+                                         default_label="Prior Week")
     filtered_week_strs  = [str(w) for w in filtered_week_dates]
 
     # --- DM + Result filters ---
